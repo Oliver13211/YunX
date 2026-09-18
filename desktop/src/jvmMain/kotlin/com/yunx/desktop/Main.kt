@@ -35,6 +35,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,13 +48,28 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.window.Tray
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.yunx.app.data.db.AppDatabase
+import com.yunx.app.data.db.DownloadTaskEntity
 import com.yunx.app.data.db.Pan123AccountEntity
 import com.yunx.app.data.db.QuarkAccountEntity
 import com.yunx.app.data.db.get
+import com.yunx.app.data.download.ChunkDownloader
+import com.yunx.app.data.download.DownloadManager
+import com.yunx.app.data.download.DownloadPlatform
+import com.yunx.app.data.network.HttpClients
+import com.yunx.app.data.network.Pan123Constants
+import com.yunx.app.data.network.QuarkConstants
+import com.yunx.app.data.network.model.DownloadLink
+import com.yunx.app.data.security.DesktopCredentialCipher
 import com.yunx.app.data.network.Pan123Api
 import com.yunx.app.data.network.QuarkApi
 import com.yunx.app.data.network.ShareLinkParser
@@ -76,28 +93,57 @@ private fun rootDirFid(platform: SharePlatform): String = when (platform) {
     else -> "0" // QuarkConstants.DEFAULT_PDIR_FID / UC / XUNLEI / C139 / PAN123 均为 "0"
 }
 
-private fun formatSize(bytes: Long): String = when {
+internal fun formatSize(bytes: Long): String = when {
     bytes >= 1L shl 30 -> "%.2f GB".format(bytes.toDouble() / (1L shl 30))
     bytes >= 1L shl 20 -> "%.2f MB".format(bytes.toDouble() / (1L shl 20))
     bytes >= 1L shl 10 -> "%.1f KB".format(bytes.toDouble() / (1L shl 10))
     else -> "$bytes B"
 }
 
+/** 程序化托盘图标（避免引入图片资源）：紫色圆点，对齐 Material 主色。 */
+private val yunxTrayIcon = object : Painter() {
+    override val intrinsicSize = Size(24f, 24f)
+    override fun DrawScope.onDraw() {
+        drawCircle(Color(0xFF6750A4), radius = 11f, center = Offset(12f, 12f))
+        drawCircle(Color.White, radius = 4f, center = Offset(12f, 12f))
+    }
+}
+
 fun main() = application {
+    val trayText = remember { mutableStateOf("YunX Desktop") }
+    Tray(icon = yunxTrayIcon, tooltip = trayText.value) {
+        Item("退出", onClick = ::exitApplication)
+    }
     Window(
         onCloseRequest = ::exitApplication,
         title = "YunX Desktop（开源版 · AGPL-3.0）",
         state = rememberWindowState()
     ) {
         MaterialTheme {
-            DesktopApp()
+            DesktopApp(trayText)
         }
     }
 }
 
 @Composable
-private fun DesktopApp() {
+private fun DesktopApp(trayText: MutableState<String>) {
     val db = remember { AppDatabase.get() }
+    val settings = remember { DesktopSettings() }
+    val downloadManager = remember {
+        DownloadManager(
+            env = DesktopDownloadEnvironment(settings),
+            dao = db.downloadTaskDao(),
+            downloader = ChunkDownloader { HttpClients.downloadClient() },
+            threadProvider = { settings.threadCount },
+            saveDirProvider = { settings.downloadDir },
+            concurrencyProvider = { settings.maxConcurrent },
+            speedLimitProvider = { settings.speedLimit },
+            retryCountProvider = { 3 },
+            keepWhenLockedProvider = { false },
+            showSpeedProvider = { true },
+            credentialCipher = DesktopCredentialCipher()
+        )
+    }
     val quarkDao = remember { db.quarkAccountDao() }
     val pan123Dao = remember { db.pan123AccountDao() }
     val quarkApi = remember { QuarkApi() }
@@ -121,6 +167,7 @@ private fun DesktopApp() {
     var session by remember { mutableStateOf<ShareSession?>(null) }
     var sessionRepo by remember { mutableStateOf<ShareResolveRepository?>(null) }
     var sessionCookie by remember { mutableStateOf("") }
+    var sessionPlatform by remember { mutableStateOf<SharePlatform?>(null) }
     var directLink by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
 
@@ -209,6 +256,7 @@ private fun DesktopApp() {
                             session = s
                             sessionRepo = repo
                             sessionCookie = useCookie
+                            sessionPlatform = parsed.platform
                             repo.listFiles(s, rootDirFid(parsed.platform), useCookie)
                                 .onSuccess { message = "「${s.title}」共 ${it.size} 项（根目录）"; files = it }
                                 .onFailure { message = "列取文件失败：${it.message}" }
@@ -266,9 +314,50 @@ private fun DesktopApp() {
                                 }
                             }
                         ) { Text("取直链") }
+                        TextButton(
+                            enabled = !file.isdir && !resolving,
+                            onClick = {
+                                val repo = sessionRepo ?: return@TextButton
+                                val platform = sessionPlatform ?: return@TextButton
+                                resolving = true
+                                scope.launch {
+                                    runCatching {
+                                        val link = repo.getShareDownloadLink(s, file, sessionCookie).getOrThrow()
+                                        // 请求头语义对齐 Android ResolveViewModel.enqueueDownload（§5.3 CDN 约束）
+                                        val platformConst = if (platform == SharePlatform.PAN123) DownloadPlatform.PAN123 else DownloadPlatform.QUARK
+                                        val headers = if (platform == SharePlatform.PAN123) {
+                                            mapOf("User-Agent" to Pan123Constants.WEB_UA, "Referer" to Pan123Constants.DOWNLOAD_REFERER)
+                                        } else {
+                                            mapOf(
+                                                "Cookie" to sessionCookie,
+                                                "User-Agent" to QuarkConstants.API_USER_AGENT,
+                                                "Referer" to QuarkConstants.DOWNLOAD_REFERER
+                                            )
+                                        }
+                                        downloadManager.enqueue(link.downloadUrl, link.filename, headers, link.size, platformConst)
+                                        link
+                                    }.onSuccess {
+                                        message = "已加入下载任务，见下方下载管理"
+                                        directLink = ""
+                                    }.onFailure {
+                                        it.printStackTrace()
+                                        message = "加入下载失败：${it.message}"
+                                    }
+                                    resolving = false
+                                }
+                            }
+                        ) { Text("下载") }
                     }
                 }
             }
         }
+
+        // ---------- 下载管理 ----------
+        val allTasks by db.downloadTaskDao().observeAll().collectAsState(initial = emptyList())
+        LaunchedEffect(allTasks) {
+            val active = allTasks.count { it.status == DownloadTaskEntity.STATUS_DOWNLOADING }
+            trayText.value = if (active > 0) "YunX Desktop · $active 个下载中" else "YunX Desktop"
+        }
+        DownloadsSection(db, downloadManager, settings)
     }
 }

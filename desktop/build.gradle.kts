@@ -19,6 +19,8 @@ kotlin {
                 implementation(project(":composeApp"))
                 // AppDatabase 的父类 RoomDatabase 需要对外可见（composeApp 的 implementation 依赖不导出）
                 implementation(libs.room.runtime)
+                // ChunkDownloader 工厂 lambda 的签名引用 OkHttpClient（composeApp 的 implementation 依赖不导出）
+                implementation("com.squareup.okhttp3:okhttp:4.12.0")
                 implementation(compose.runtime)
                 implementation(compose.foundation)
                 implementation(compose.material3)
