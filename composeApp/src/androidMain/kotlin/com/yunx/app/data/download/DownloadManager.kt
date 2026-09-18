@@ -18,8 +18,7 @@
 
 package com.yunx.app.data.download
 
-import android.content.Context
-import android.util.Log
+import com.yunx.app.platform.YunXLog
 import com.yunx.app.util.LogRedactor
 import com.yunx.app.data.db.DownloadTaskDao
 import com.yunx.app.data.db.DownloadTaskEntity
@@ -156,7 +155,7 @@ private class ElasticAllocator(
  * - 完成后合并分片并保存到公共 Download 目录。
  */
 class DownloadManager(
-    private val context: Context,
+    private val env: DownloadEnvironment,
     private val dao: DownloadTaskDao,
     private val downloader: ChunkDownloader,
     /** 下载线程数提供者（按平台，可在设置中修改，动态生效），默认 32 */
@@ -212,7 +211,7 @@ class DownloadManager(
             val percent = if (total > 0) ((new * 100 / total).toInt().coerceIn(0, 100)) else -1
             val speed = _stats.value[id]?.speed ?: 0L
             val speedText = if (speed > 0) formatSpeed(speed) else ""
-            DownloadService.update(context, fileName, percent, speedText, showSpeedProvider())
+            env.updateProgressNotification(fileName, percent, speedText, showSpeedProvider())
         }
     }
 
@@ -301,7 +300,7 @@ class DownloadManager(
             url.substringAfterLast('/').substringBefore('?')
                 .ifBlank { "download_${System.currentTimeMillis()}" }
         }
-        Log.d(TAG, "enqueue: origin=${LogRedactor.url(url)} fileName=$safeName headers=${headers.keys} size=$size")
+        YunXLog.d(TAG, "enqueue: origin=${LogRedactor.url(url)} fileName=$safeName headers=${headers.keys} size=$size")
         val id = dao.insert(
             DownloadTaskEntity(
                 url = url,
@@ -335,7 +334,7 @@ class DownloadManager(
     fun start(id: Long, headers: Map<String, String> = emptyMap()) {
         // 恢复时未传 headers：沿用入队时保存的（Cookie/UA 对直链下载是必需的）
         val effectiveHeaders = headers.ifEmpty { taskHeaders[id] ?: emptyMap() }
-        Log.d(TAG, "start: id=$id headers=${effectiveHeaders.keys}")
+        YunXLog.d(TAG, "start: id=$id headers=${effectiveHeaders.keys}")
         synchronized(jobsLock) {
             // 原子注册：检查 + 占位 + launch + complete 在同一锁内完成，
             // pause/remove 要么拿到已注册的 job，要么拿不到（视为未运行）
@@ -370,11 +369,11 @@ class DownloadManager(
                     _stats.update { it - id }
                     // 协程已被取消（暂停/删除）：不标记失败，避免覆盖 PAUSED 状态
                     if (isTaskActive()) {
-                        Log.e(TAG, "task $id failed: ${e.message ?: e.javaClass.simpleName}", e)
+                        YunXLog.e(TAG, "task $id failed: ${e.message ?: e.javaClass.simpleName}", e)
                         dao.updateStatus(id, DownloadTaskEntity.STATUS_FAILED)
                         dao.updateError(id, e.message ?: e.javaClass.simpleName)
                     } else {
-                        Log.w(TAG, "task $id cancelled: ${e.message}")
+                        YunXLog.w(TAG, "task $id cancelled: ${e.message}")
                     }
                 } finally {
                     // 任务结束（成功/失败/暂停/删除）：无任务时停止前台服务
@@ -398,7 +397,7 @@ class DownloadManager(
     private suspend fun onTaskStarted(id: Long) {
         if (activeTaskCount.getAndIncrement() == 0) {
             val name = runCatching { dao.get(id)?.fileName }.getOrNull() ?: "下载任务"
-            DownloadService.start(context, name)
+            env.onTaskFlowStarted(name)
         }
         // 锁屏保持下载：开启时获取 PARTIAL_WAKE_LOCK（息屏维持 CPU/网络）
         acquireWakeLockIfNeeded()
@@ -407,34 +406,25 @@ class DownloadManager(
     private fun onTaskFinished() {
         if (activeTaskCount.decrementAndGet() <= 0) {
             activeTaskCount.set(0)
-            DownloadService.stop(context)
+            env.onTaskFlowStopped()
             releaseWakeLock()
         }
     }
 
-    // ---------- 锁屏保持下载（WakeLock） ----------
-
-    @Volatile
-    private var wakeLock: android.os.PowerManager.WakeLock? = null
+    // ---------- 锁屏保持下载（WakeLock，平台实现见 DownloadEnvironment） ----------
 
     private fun acquireWakeLockIfNeeded() {
         if (!keepWhenLockedProvider()) return
-        val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager ?: return
-        if (wakeLock == null) {
-            wakeLock = pm.newWakeLock(
-                android.os.PowerManager.PARTIAL_WAKE_LOCK, "yunx:download"
-            ).apply { setReferenceCounted(false) }
-        }
-        wakeLock?.let { if (!it.isHeld) it.acquire() }
+        env.acquireWakeLock("yunx:download")
     }
 
     private fun releaseWakeLock() {
-        wakeLock?.let { if (it.isHeld) it.release() }
+        env.releaseWakeLock()
     }
 
     /** 暂停下载（保留 part 文件与请求头） */
     fun pause(id: Long) {
-        Log.d(TAG, "pause: id=$id")
+        YunXLog.d(TAG, "pause: id=$id")
         // 立即中断该任务所有分片网络请求（不依赖协程取消传播，阻塞 IO 马上停止）
         downloader.cancelCalls(id)
         val deferred = synchronized(jobsLock) { activeJobs.remove(id) }
@@ -463,7 +453,7 @@ class DownloadManager(
      * @param deleteLocal 同时删除已保存到本地的文件（savePath）
      */
     fun remove(id: Long, deleteLocal: Boolean = false) {
-        Log.d(TAG, "remove: id=$id deleteLocal=$deleteLocal")
+        YunXLog.d(TAG, "remove: id=$id deleteLocal=$deleteLocal")
         // 立即中断该任务所有分片网络请求
         downloader.cancelCalls(id)
         _stats.update { it - id }
@@ -481,8 +471,8 @@ class DownloadManager(
             }
             if (deleteLocal) {
                 dao.get(id)?.savePath?.let {
-                    val deleted = DownloadSaver.delete(context, it)
-                    Log.d(TAG, "remove: id=$id 删除本地文件 ${if (deleted) "成功" else "失败/未找到"} ($it)")
+                    val deleted = env.deleteLocalFile(it)
+                    YunXLog.d(TAG, "remove: id=$id 删除本地文件 ${if (deleted) "成功" else "失败/未找到"} ($it)")
                 }
             }
             dao.delete(id)
@@ -550,7 +540,7 @@ class DownloadManager(
                 } catch (e: Exception) {
                     attempts++
                     if (isTaskActive() && attempts <= maxRetries) {
-                        Log.d(TAG, "runTaskWithRetry: id=$id 失败，自动重试 $attempts/$maxRetries：${e.message}")
+                        YunXLog.d(TAG, "runTaskWithRetry: id=$id 失败，自动重试 $attempts/$maxRetries：${e.message}")
                         // 逐次递增延迟，避免失败风暴
                         delay(1200L * attempts)
                     } else {
@@ -569,11 +559,11 @@ class DownloadManager(
         val task = dao.get(id) ?: return
         dao.updateStatus(id, DownloadTaskEntity.STATUS_DOWNLOADING)
         taskStartTimes[id] = System.currentTimeMillis()
-        Log.d(TAG, "runTask: id=$id fileName=${task.fileName}")
+        YunXLog.d(TAG, "runTask: id=$id fileName=${task.fileName}")
 
         // HLS（m3u8 转码流，如 UC play）：不走 Range 分片，直接拉分片合并
         if (task.url.contains(".m3u8", true) || task.url.contains(".m3u", true)) {
-            Log.d(TAG, "runTask: id=$id HLS 转码流下载 origin=${LogRedactor.url(task.url)}")
+            YunXLog.d(TAG, "runTask: id=$id HLS 转码流下载 origin=${LogRedactor.url(task.url)}")
             hlsDownload(id, task, headers)
             return
         }
@@ -584,11 +574,11 @@ class DownloadManager(
             ?: taskSizes[id]?.takeIf { it > 0 }
         if (total == null) {
             // 服务器不返回文件大小（Range/Content-Length 均缺失）：降级为流式下载（开放区间 Range）
-            Log.w(TAG, "runTask: id=$id 无法获取总大小，降级流式下载 origin=${LogRedactor.url(task.url)}")
+            YunXLog.w(TAG, "runTask: id=$id 无法获取总大小，降级流式下载 origin=${LogRedactor.url(task.url)}")
             streamDownload(id, task, headers)
             return
         }
-        Log.d(TAG, "getTotalSize: id=$id total=$total origin=${LogRedactor.url(task.url)}")
+        YunXLog.d(TAG, "getTotalSize: id=$id total=$total origin=${LogRedactor.url(task.url)}")
         dao.updateProgress(id, DownloadTaskEntity.STATUS_DOWNLOADING, task.downloadedSize, total)
         // 取到大小后再次检查取消（暂停可能发生在 getTotalSize 期间）
         if (!isTaskActive()) return
@@ -605,7 +595,7 @@ class DownloadManager(
         val planFile = File(chunkDir, "plan.txt")
         val plan = "chunks=$chunkCount total=$total main=$mainPoolCount"
         if (planFile.exists() && planFile.readText() != plan) {
-            Log.w(TAG, "runTask: id=$id 分片计划变化（$plan），清空旧 part 重下")
+            YunXLog.w(TAG, "runTask: id=$id 分片计划变化（$plan），清空旧 part 重下")
             chunkDir.deleteRecursively()
             chunkDir.mkdirs()
         } else {
@@ -622,7 +612,7 @@ class DownloadManager(
         } else {
             threadCount.coerceAtLeast(1)
         }
-        Log.d(TAG, "分片规划: id=$id chunks=$chunkCount main=$mainPoolCount elasticStart=$elasticStart size=$chunkSize threads=$threadCount effectiveWorkers=$effectiveWorkers isXunlei=$isXunlei")
+        YunXLog.d(TAG, "分片规划: id=$id chunks=$chunkCount main=$mainPoolCount elasticStart=$elasticStart size=$chunkSize threads=$threadCount effectiveWorkers=$effectiveWorkers isXunlei=$isXunlei")
 
         // 注册实时统计：线程数 = 有效并发（受安全上限约束）
         _stats.update { it + (id to DownloadStats(0L, -1L, effectiveWorkers)) }
@@ -726,7 +716,7 @@ class DownloadManager(
                                     // 偶发 200（CDN 限流中间态）不算真降级：前 N 次不触发回退，继续领新片；
                                     // 持续 RANGE_IGNORED 才回退单流
                                     val n = rangeIgnoredCount.incrementAndGet()
-                                    Log.w(TAG, "runTask: id=$id 分片${i + 1} 检测到服务器忽略Range（累计 $n/$RANGE_IGNORED_TOLERANCE）")
+                                    YunXLog.w(TAG, "runTask: id=$id 分片${i + 1} 检测到服务器忽略Range（累计 $n/$RANGE_IGNORED_TOLERANCE）")
                                     if (n >= RANGE_IGNORED_TOLERANCE) fallback.compareAndSet(false, true)
                                 }
                                 ChunkResult.FAILED -> failReason.compareAndSet(null, "分片 ${i + 1}/$mainPoolCount 下载失败")
@@ -770,7 +760,7 @@ class DownloadManager(
                         when (res) {
                             ChunkResult.RANGE_IGNORED -> {
                                 val n = rangeIgnoredCount.incrementAndGet()
-                                Log.w(TAG, "runTask: id=$id 弹性区间 $key 检测到服务器忽略Range（累计 $n/$RANGE_IGNORED_TOLERANCE）")
+                                YunXLog.w(TAG, "runTask: id=$id 弹性区间 $key 检测到服务器忽略Range（累计 $n/$RANGE_IGNORED_TOLERANCE）")
                                 if (n >= RANGE_IGNORED_TOLERANCE) fallback.compareAndSet(false, true)
                             }
                             ChunkResult.FAILED -> failReason.compareAndSet(null, "弹性区间 ${s}-${e} 下载失败")
@@ -787,7 +777,7 @@ class DownloadManager(
         // ---------- 三种结局 ----------
         if (fallback.get()) {
             // 服务器忽略 Range：回退单条整文件流（只下一次，不按分片重复下载整文件）
-            Log.w(TAG, "runTask: id=$id 回退单流整文件下载（避免重复下载整文件）")
+            YunXLog.w(TAG, "runTask: id=$id 回退单流整文件下载（避免重复下载整文件）")
             singleStreamFallback(id, task, headers, total, chunkDir, failReason)
             return
         }
@@ -808,7 +798,7 @@ class DownloadManager(
                     }
                 }
             }
-            Log.e(TAG, "runTask: id=$id 缺失区间 ${missing.size} 个 reason=${failReason.get()}，并行重试")
+            YunXLog.e(TAG, "runTask: id=$id 缺失区间 ${missing.size} 个 reason=${failReason.get()}，并行重试")
             val retryOk = if (missing.isEmpty()) true else coroutineScope {
                 val retryIdx = AtomicInteger(0)
                 val retryResults = arrayOfNulls<ChunkResult?>(missing.size)
@@ -847,16 +837,16 @@ class DownloadManager(
                 retryResults.all { it == ChunkResult.OK }
             }
             if (retryOk) {
-                Log.d(TAG, "runTask: id=$id 重试补齐所有区间，开始合并")
+                YunXLog.d(TAG, "runTask: id=$id 重试补齐所有区间，开始合并")
                 finishDownload(id, chunkDir, finalChunkFiles(chunkDir, mainPoolCount), task.fileName, total)
                 return
             }
             // 重试仍失败：回退单流
-            Log.w(TAG, "runTask: id=$id 分片重试失败，回退单流整文件下载")
+            YunXLog.w(TAG, "runTask: id=$id 分片重试失败，回退单流整文件下载")
             singleStreamFallback(id, task, headers, total, chunkDir, failReason)
             return
         }
-        Log.d(TAG, "runTask: id=$id 所有区间完成，开始合并")
+        YunXLog.d(TAG, "runTask: id=$id 所有区间完成，开始合并")
         finishDownload(id, chunkDir, finalChunkFiles(chunkDir, mainPoolCount), task.fileName, total)
     }
 
@@ -925,7 +915,7 @@ class DownloadManager(
         }
         if (ok != ChunkResult.OK) {
             // Range 被 CDN 拒绝（416/403）或忽略（200 整文件）：回退为无 Range 完整 GET
-            Log.w(TAG, "streamDownload: id=$id Range 失败，回退完整 GET 下载")
+            YunXLog.w(TAG, "streamDownload: id=$id Range 失败，回退完整 GET 下载")
             downloaded.set(0)
             dao.updateProgress(id, DownloadTaskEntity.STATUS_DOWNLOADING, 0, 0)
             val ok2 = downloader.downloadFull(
@@ -949,7 +939,7 @@ class DownloadManager(
     private suspend fun hlsDownload(id: Long, task: DownloadTaskEntity, headers: Map<String, String>) {
         if (!isTaskActive()) return
         _stats.update { it + (id to DownloadStats(0L, -1L, 1)) }
-        val hlsFile = File(context.cacheDir, "hls_$id")
+        val hlsFile = File(env.tempCacheDir(), "hls_$id")
         hlsFile.delete()
         val downloaded = AtomicLong(0)
         val hlsLastAt = AtomicLong(0L)
@@ -970,12 +960,12 @@ class DownloadManager(
             throw IllegalStateException("未授予存储权限，无法保存到下载目录")
         }
         val savedPath = withContext(Dispatchers.IO) {
-            DownloadSaver.save(context, task.fileName, hlsFile, saveDirProvider())
+            env.saveDownloadFile(task.fileName, hlsFile, saveDirProvider())
         }
             ?: throw IllegalStateException("保存到下载目录失败")
         val hlsTotal = dao.get(id)?.totalSize ?: 0L
         completeWithAvg(id, savedPath, hlsTotal)
-        Log.d(TAG, "hlsDownload: id=$id 下载完成 savedPath=$savedPath size=${hlsFile.length()}")
+        YunXLog.d(TAG, "hlsDownload: id=$id 下载完成 savedPath=$savedPath size=${hlsFile.length()}")
         taskCallbacks.remove(id)?.let { cb -> runCatching { cb() } }
         _stats.update { it - id }
         hlsFile.delete()
@@ -996,20 +986,20 @@ class DownloadManager(
         // 1) 分片完整性
         for (part in chunkFiles) {
             if (!part.exists() || part.length() <= 0) {
-                Log.e(TAG, "finishDownload: id=$id 分片缺失/为空 $part")
+                YunXLog.e(TAG, "finishDownload: id=$id 分片缺失/为空 $part")
                 throw IllegalStateException("分片文件缺失或为空，拒绝合并（防止文件损坏）")
             }
         }
         // 2) 合并
         // ★ 合并产物放内部缓存（data 分区，非 FUSE 挂载）：大文件 IO 快得多；保存完成即删
-        val merged = File(context.cacheDir, "merged_$id")
+        val merged = File(env.tempCacheDir(), "merged_$id")
         if (!downloader.mergeChunks(chunkFiles, merged)) {
-            Log.e(TAG, "finishDownload: id=$id 合并分片失败")
+            YunXLog.e(TAG, "finishDownload: id=$id 合并分片失败")
             throw IllegalStateException("合并分片失败")
         }
         // 3) 整体大小校验（total>0 时）
         if (total > 0 && merged.length() != total) {
-            Log.e(TAG, "finishDownload: id=$id 文件大小校验失败 期望=$total 实际=${merged.length()}")
+            YunXLog.e(TAG, "finishDownload: id=$id 文件大小校验失败 期望=$total 实际=${merged.length()}")
             merged.delete()
             throw IllegalStateException("文件大小校验失败：期望 $total 字节，实际 ${merged.length()} 字节（已拒绝保存损坏文件）")
         }
@@ -1022,11 +1012,11 @@ class DownloadManager(
         // ★ 同步阻塞拷贝必须切 IO 线程：任务跑在 Dispatchers.Default（CPU 池），
         //   大文件保存若占满 Default 线程会让整个下载器协程饿死（"100% 卡死保存不了"）
         val savedPath = withContext(Dispatchers.IO) {
-            DownloadSaver.save(context, fileName, merged, saveDirProvider())
+            env.saveDownloadFile(fileName, merged, saveDirProvider())
         }
             ?: throw IllegalStateException("保存到下载目录失败")
         completeWithAvg(id, savedPath, total)
-        Log.d(TAG, "finishDownload: id=$id 下载完成 savedPath=$savedPath size=${merged.length()}")
+        YunXLog.d(TAG, "finishDownload: id=$id 下载完成 savedPath=$savedPath size=${merged.length()}")
         taskCallbacks.remove(id)?.let { cb ->
             runCatching { cb() }
         }
@@ -1106,7 +1096,7 @@ class DownloadManager(
 
     /** 下载临时文件缓存根目录：外部缓存（/storage/emulated/0/Android/data/com.yunx.app/cache），
      *  与最终保存目录解耦，系统可自动清理；外部存储不可用时回退内部缓存目录。 */
-    private fun cacheBase(): File = context.externalCacheDir ?: context.cacheDir
+    private fun cacheBase(): File = env.chunkCacheBase()
 
     /** 分片临时文件目录：cacheBase()/download_tmp/$id */
     private fun chunkDirOf(id: Long): File = File(cacheBase(), "download_tmp/$id")

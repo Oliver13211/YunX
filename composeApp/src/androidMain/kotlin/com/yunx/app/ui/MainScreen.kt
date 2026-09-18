@@ -84,6 +84,7 @@ import androidx.core.content.ContextCompat
 import com.yunx.app.data.db.AppDatabase
 import com.yunx.app.data.db.DownloadTaskEntity
 import com.yunx.app.data.download.ChunkDownloader
+import com.yunx.app.data.download.AndroidDownloadEnvironment
 import com.yunx.app.data.download.DownloadManager
 import com.yunx.app.data.backup.AuthBackupManager
 import com.yunx.app.data.network.BaiduApi
@@ -241,7 +242,7 @@ fun MainScreen() {
     // 并支持隐藏菜单「忽略 SSL 证书」开关，抓包调试时即时生效，无需重启）
     val downloadManager = remember {
         DownloadManager(
-            context = context,
+            env = AndroidDownloadEnvironment(context),
             dao = db.downloadTaskDao(),
             downloader = ChunkDownloader({ HttpClients.downloadClient() }),
             threadProvider = { platform -> settings.downloadThreadsFor(platform) },
