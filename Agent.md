@@ -22,6 +22,7 @@
 | minSdk / targetSdk / compileSdk | 23 / 34 / 36 |
 | JVM target | 17 |
 | 开源协议 | GNU AGPL-3.0 |
+| 桌面移植 | **`desktop` 分支进行中**：YunX Desktop（KMP + Compose Multiplatform），计划与规范见 §10，计划书见 `docs/superpowers/plans/` |
 
 支持平台：夸克、UC、迅雷、百度、139（和彩云）、123 云盘。
 
@@ -294,6 +295,15 @@ private const val STAGGER_CAP = 8; STAGGER_MS = 25L  // 错峰建连，平摊 TC
 - 数据库版本变更、分片规划变更、并发上限变更，必须在总结里显式标注兼容性影响。
 - 性能类改动给出可验证方法（如"看 `分片规划:` 日志中的 `threads` / `effectiveWorkers`"），不要只声称变快了。
 
+### 6.4 Git / GitHub 操作规范
+
+1. **GitHub 相关操作（PR、Issue、Release、fork 同步、仓库检查）只使用 `gh` 命令行**，不打开网页操作；`gh` 能覆盖的操作不要用等价的裸 HTTP/API 调用。
+2. 本地提交仍用 `git add` + `git commit`；提交信息用**中文 Conventional Commits**（`feat:` / `fix:` / `docs:` / `refactor:` / `chore:`），与上游历史风格一致。
+3. 分支纪律：**禁止向 `master` 直接推送**。桌面移植全部工作在 `desktop` 分支进行；分支间同步用 `git pull --rebase`，fork 与上游同步用 `gh repo sync Oliver13211/YunX --branch master`。
+4. 推送用 `git push`（gh 无 push 子命令），推送前确认分支正确：`git branch --show-current`。
+5. 本环境直连 github.com 超时：git 网络操作统一加 `-c http.proxy=http://127.0.0.1:7890`，`gh` 统一设置 `HTTPS_PROXY=http://127.0.0.1:7890`。
+6. 提交前自检：`git status` 无意外文件、`git diff --staged` 复读一遍；**禁止提交新的二进制文件、密钥、Cookie/token 等敏感内容**（根目录 `debug.keystore` 为上游既有调试签名，保持原样即可）。
+
 
 ## 7. 长期风险提示
 
@@ -329,3 +339,66 @@ private const val STAGGER_CAP = 8; STAGGER_MS = 25L  // 错峰建连，平摊 TC
 3. 首次启动会出现一个「官方开源版」安全提示弹窗（确认一次后不再出现），属于同一防御机制的正常产品行为，不是 bug。
 4. 常规业务开发（解析、下载、UI、Room 等）不会触及这些代码；若你的改动意外导致其编译报错，请优先调整自己的改动方式，而不是修改自检代码。
 5. 确因架构调整需要动这部分代码时，**必须先与作者沟通确认**，且改动不得降低其对抗静态分析的能力（不得引入明文特征、不得集中到单一易定位位置）。
+
+---
+
+## 10. desktop 分支规范（YunX Desktop 移植）
+
+> 完整背景：`docs/superpowers/plans/2026-09-18-yunx-desktop-kmp-migration.md`（总计划书）、`2026-09-18-phase0-1-kmp-foundation.md`（Phase 0/1 任务级计划）。本节与总计划书冲突时，以总计划书为准。
+
+### 10.1 已拍板决策（不要重新讨论）
+
+| 项 | 结论 |
+|---|---|
+| 产品名 | **YunX Desktop** |
+| 登录 | KCEF 内嵌 WebView（"系统浏览器回贴 Cookie"仅为降级预案） |
+| macOS 分发 | 未公证 dmg、不上架、不买签名证书；发布说明写明首启放行步骤 |
+| Linux | 仅保持源集与接缝可用，**不做**适配与打包 |
+| 仓库 | 在本 fork 的 `desktop` 分支实施，持续可合并上游 |
+
+### 10.2 目标结构与源集划分规则
+
+```
+composeApp/                     # 原 app 模块 KMP 化（Android + 桌面共享）
+└── src/
+    ├── commonMain/kotlin/      # 纯 Kotlin（无 java.* / okhttp）：策略算法、常量、纯测试
+    ├── jvmShared/kotlin/       # JVM 系共享（可用 java.* / okhttp）：协议层、下载引擎、解析仓库
+    ├── androidMain/kotlin/     # Android 专属：UI、Room/Keystore actual、WebView 登录、前台服务
+    ├── androidUnitTest/kotlin/ # Android 侧单元测试
+    ├── jvmMain/kotlin/         # 桌面专属：桌面 actual（SecureStore/路径/日志）、桌面工具
+    ├── jvmTest/kotlin/         # 桌面侧测试
+    └── commonTest/kotlin/      # 双端共跑的纯逻辑测试（kotlin-test）
+desktop/                        # Compose Multiplatform 桌面入口与打包（Phase 2 起）
+```
+
+判定规则：**能写纯 Kotlin 就进 `commonMain`；需要 `java.*`/OkHttp 进 `jvmShared`；引用 `android.*`/Compose Android 才允许进 `androidMain`**。每新增一个 `android.*` import 都要有理由。
+
+### 10.3 平台接缝清单（expect/actual 登记处）
+
+跨源集调用平台能力，必须走以下接缝，**新增接缝先在此登记再动工**：
+
+| 接缝 | 用途 | Android actual | 桌面 actual |
+|---|---|---|---|
+| `PlatformBase64` | Base64 编解码（minSdk 23 无 java.util.Base64） | `android.util.Base64` | `java.util.Base64` |
+| `YunXLog` | 日志（调用侧已过 LogRedactor） | `android.util.Log` | `java.util.logging` |
+| `KeyValueStore` | 轻量 KV（设备指纹等） | `SharedPreferences` | `java.util.prefs.Preferences` |
+| `DownloadEnvironment` | 缓存目录 / 省电模式查询 | `Context` 系 API | `java.io.tmpdir` / 恒否 |
+| `SecureStore` | 凭证安全存取 | Android Keystore（沿用 `CredentialCipher`） | Keychain / DPAPI / Secret Service（Phase 4） |
+| `CookieSource` | 登录态 Cookie 来源 | WebView CookieManager（Phase 4） | KCEF CookieManager（Phase 4） |
+
+### 10.4 版本锚点（升级须整体一致并双端回归）
+
+Kotlin **2.2.x**（KSP 同源版本）· AGP 8.13.x · Compose Multiplatform 1.9.x（桌面，Phase 2 引入 `org.jetbrains.compose`）· Room **2.7.x**（KMP）· OkHttp 4.12.x · KCEF（Phase 4）· java-keyring（Phase 4）。
+新增依赖须与 AGPL-3.0 兼容（Apache-2.0/BSD/MIT 优先，LGPL 需动态链接），**禁止**引入商业闭源运行时（如 JxBrowser）与 GPL/LGPL 之外的强传染性许可。
+
+### 10.5 双端验证门禁（每个任务提交前）
+
+```
+./gradlew :composeApp:assembleDebug        # Android APK 可构建
+./gradlew :composeApp:testDebugUnitTest    # Android 单测全绿
+./gradlew :composeApp:jvmTest              # 桌面 JVM 单测全绿（Phase 0.2 起存在）
+```
+
+- **Android 端行为零回归**是硬约束；桌面侧新行为不得反向污染 Android（协议行为、分片规划、并发上限不变）。
+- §9 的完整性自检模块**不迁移**到桌面；Android 端相关代码保持原样（含"不写注释、字符串加密"的约定）。
+- `data/db`（Room）KMP 化**排在 Phase 2 首任务**（桌面端首次需要 DB 之处），Phase 0/1 不动 `data/db`。

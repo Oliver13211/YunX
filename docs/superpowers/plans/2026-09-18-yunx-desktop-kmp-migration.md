@@ -96,13 +96,13 @@ expect fun currentLogSink()  // android.util.Log / slf4j
 **交付判据**：Android APK 构建成功并在真机安装冒烟通过；既有 JVM 单测全绿。
 **预估**：2–4 天（含 Room 迁移回归：必须沿用既有 Migration，禁止破坏性迁移——Agent.md 约定 3.7）。
 
-### Phase 1：core 去 Android 化（commonMain 达成）
-**范围**：落地上述 expect/actual 接缝（Base64、Log、Context 注入点、SecureStore 接口定义）；`ShareLinkParser`、`HttpRangePolicy`、`ChunkDownloader`、`HlsDownloader`、六家网盘 API 全部移入 `commonMain`；为每条 expect 补 Android actual；新增 JVM 目标并让测试在桌面 JVM 源集跑通。
+### Phase 1：core 去 Android 化（jvmShared 共享层达成）
+**范围**：落地 expect/actual 接缝（Base64、日志、设备指纹 KV、下载环境/WakeLock；SecureStore 与 CookieSource 接缝随 Phase 4 落地）；`ShareLinkParser`、`HttpRangePolicy`、`ChunkDownloader`、`HlsDownloader`、六家网盘 API 全部移入 `jvmShared` 中间源集（JVM 系共享层，OkHttp 与 `java.*` 可用）；新增 JVM 目标并让测试在桌面 JVM 源集跑通。**细化任务级计划见 `2026-09-18-phase0-1-kmp-foundation.md`**（注：`data/db` 不在本阶段，Room KMP 化为 Phase 2 首任务）。
 **交付判据**：`gradle :composeApp:jvmTest` 全绿（复用现有 7 个测试类 + 协议层新测试）；Android 端行为无变化。
 **预估**：2–3 天。
 
 ### Phase 2：桌面骨架 + 解析链路打通（首个可见里程碑）
-**范围**：`desktop` 模块：CMP Window、导航壳、Material3 主题；接入真实协议：粘贴分享链接→解析→文件列表→获取直链（先做夸克 + 123 云盘这两条"免 WebView 登录/易验证"的链路，123 用账号密码，夸克可先手工导入 Cookie）；系统文件选择器选目录。
+**范围**：首任务 **`data/db` Room KMP 化**（Entity/DAO/AppDatabase 迁 `jvmShared`，桌面端 `BundledSQLiteDriver` + sqlite-jdbc，沿用既有 Migration）；随后 `desktop` 模块：CMP Window、导航壳、Material3 主题；接入真实协议：粘贴分享链接→解析→文件列表→获取直链（先做夸克 + 123 云盘这两条"免 WebView 登录/易验证"的链路，123 用账号密码，夸克可先手工导入 Cookie）；系统文件选择器选目录。
 **交付判据**：桌面端对真实分享链接完成"解析→列出文件→拿到直链 URL"（人工验收 + curl 验证直链可 Range 请求）。
 **预估**：2–3 天。
 
