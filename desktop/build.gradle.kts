@@ -28,6 +28,8 @@ kotlin {
                 implementation(compose.ui)
                 // 桌面窗口/输入/渲染后端（skiko），Window/application 所需
                 implementation(compose.desktop.currentOs)
+                // KCEF：内嵌 Chromium 网页登录（JCEF 运行时首启从 GitHub 下载，受限网络设 YUNX_PROXY）
+                implementation("dev.datlag:kcef:2025.03.23")
             }
         }
         val jvmTest by getting {

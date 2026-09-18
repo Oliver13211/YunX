@@ -131,26 +131,38 @@ private val yunxTrayIcon = object : Painter() {
     }
 }
 
-fun main() = application {
-    val trayText = remember { mutableStateOf("YunX Desktop") }
-    Tray(icon = yunxTrayIcon, tooltip = trayText.value) {
-        Item("退出", onClick = ::exitApplication)
+fun main() {
+    // KCEF 首次下载 JCEF 运行时走 Java Http 层：设置 YUNX_PROXY=host:port 即走代理
+    System.getenv("YUNX_PROXY")?.takeIf { it.contains(':') }?.let { proxy ->
+        val host = proxy.substringBefore(':')
+        val port = proxy.substringAfter(':')
+        System.setProperty("https.proxyHost", host)
+        System.setProperty("https.proxyPort", port)
+        System.setProperty("http.proxyHost", host)
+        System.setProperty("http.proxyPort", port)
     }
-    Window(
-        onCloseRequest = ::exitApplication,
+    application {
+        val trayText = remember { mutableStateOf("YunX Desktop") }
+        // Tray 是 ApplicationScope 扩展，必须在 application 块内调用
+        Tray(icon = yunxTrayIcon, tooltip = trayText.value) {
+            Item("退出", onClick = ::exitApplication)
+        }
+        Window(
+            onCloseRequest = ::exitApplication,
         title = "YunX Desktop（开源版 · AGPL-3.0）",
-        state = rememberWindowState(width = 900.dp, height = 780.dp)
-    ) {
-        MaterialTheme(
-            colorScheme = lightColorScheme(
-                primary = Color(0xFF6750A4),
-                secondary = Color(0xFF625B71),
-                surfaceVariant = Color(0xFFE7E0EC),
-                background = Color(0xFFF7F4FA)
-            )
+            state = rememberWindowState(width = 900.dp, height = 780.dp)
         ) {
-            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                DesktopApp(trayText)
+            MaterialTheme(
+                colorScheme = lightColorScheme(
+                    primary = Color(0xFF6750A4),
+                    secondary = Color(0xFF625B71),
+                    surfaceVariant = Color(0xFFE7E0EC),
+                    background = Color(0xFFF7F4FA)
+                )
+            ) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                    DesktopApp(trayText)
+                }
             }
         }
     }
@@ -207,6 +219,7 @@ private fun DesktopApp(trayText: MutableState<String>) {
     val dirStack = remember { mutableStateListOf<Pair<String, String>>() } // fid to 名称
     var directLink by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
+    var kcefLoginFor by remember { mutableStateOf<SharePlatform?>(null) }
 
     val allTasks by db.downloadTaskDao().observeAll().collectAsState(initial = emptyList())
     LaunchedEffect(allTasks) {
@@ -251,6 +264,7 @@ private fun DesktopApp(trayText: MutableState<String>) {
                 LoginRow(
                     label = "夸克网盘",
                     status = quarkStatus,
+                    onEmbeddedLogin = { kcefLoginFor = SharePlatform.QUARK },
                     loginUrl = QuarkConstants.LOGIN_URL,
                     hint = "网页登录后：F12 → 网络 → 任一请求 → 复制整段 Cookie 粘贴到此处",
                     value = quarkCookie,
@@ -269,6 +283,7 @@ private fun DesktopApp(trayText: MutableState<String>) {
                 LoginRow(
                     label = "123 云盘",
                     status = panStatus,
+                    onEmbeddedLogin = { kcefLoginFor = SharePlatform.PAN123 },
                     loginUrl = "https://yun.123pan.com/",
                     hint = "网页登录后：F12 → 应用/网络中复制 authorToken（JWT）粘贴到此处",
                     value = panToken,
@@ -460,6 +475,35 @@ private fun DesktopApp(trayText: MutableState<String>) {
             }
         }
     }
+
+    // KCEF 内嵌登录窗（Phase 4 选定方案）
+    kcefLoginFor?.let { platform ->
+        KcefLoginWindow(
+            platform = platform,
+            onClose = { kcefLoginFor = null },
+            onCaptured = { credential ->
+                when (platform) {
+                    SharePlatform.PAN123 -> {
+                        panToken = credential
+                        scope.launch {
+                            runCatching { pan123Dao.upsert(Pan123AccountEntity(accessToken = credential)) }
+                                .onSuccess { panStatus = "已保存（AES-GCM 加密）" }
+                                .onFailure { panStatus = "保存失败：${it.message}" }
+                        }
+                    }
+                    else -> {
+                        quarkCookie = credential
+                        scope.launch {
+                            runCatching { quarkDao.upsert(QuarkAccountEntity(cookie = credential)) }
+                                .onSuccess { quarkStatus = "已保存（AES-GCM 加密）" }
+                                .onFailure { quarkStatus = "保存失败：${it.message}" }
+                        }
+                    }
+                }
+                kcefLoginFor = null
+            }
+        )
+    }
 }
 
 /** 登录行：平台名 + 打开登录页 + 凭证粘贴 + 保存。 */
@@ -467,6 +511,7 @@ private fun DesktopApp(trayText: MutableState<String>) {
 private fun LoginRow(
     label: String,
     status: String,
+    onEmbeddedLogin: () -> Unit,
     loginUrl: String,
     hint: String,
     value: String,
@@ -490,7 +535,10 @@ private fun LoginRow(
             placeholder = { Text(hint, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) },
             singleLine = true
         )
-        TextButton(onClick = onSave) { Text("保存凭证") }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = onSave) { Text("保存粘贴的凭证") }
+            TextButton(onClick = onEmbeddedLogin) { Text("内嵌窗口登录（推荐）") }
+        }
     }
 }
 

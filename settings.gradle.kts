@@ -40,6 +40,8 @@ dependencyResolutionManagement {
             maven { url = uri("https://maven.aliyun.com/repository/google") }
             maven { url = uri("https://maven.aliyun.com/repository/public") }
         }
+        // KCEF（内嵌 Chromium 登录）传递依赖 jogamp/gluegen 所在仓
+        maven { url = uri("https://jogamp.org/deployment/maven") }
         google()
         mavenCentral()
     }
