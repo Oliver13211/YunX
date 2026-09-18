@@ -10,7 +10,7 @@ import java.io.File
  * 桌面端数据库工厂：库文件位于 ~/.yunx/yunx.db，使用 Room KMP 内置 SQLite 驱动
  * （纯 Kotlin，免 JNI/JDBC），迁移策略与 Android 端共用同一份 MIGRATIONS。
  */
-internal fun AppDatabase.Companion.get(cipher: CredentialCipher = DesktopCredentialCipher()): AppDatabase =
+fun AppDatabase.Companion.get(cipher: CredentialCipher = DesktopCredentialCipher()): AppDatabase =
     instance ?: synchronized(this) {
         instance ?: run {
             val dbDir = File(System.getProperty("user.home"), ".yunx").apply { mkdirs() }

@@ -14,7 +14,7 @@ import javax.crypto.spec.SecretKeySpec
  * 安全性说明：这是「口令/系统钥匙环方案」就位前（Phase 4，Keychain/DPAPI/Secret Service）
  * 的过渡实现，密钥与数据库同机存放，防网络窃取不防本机提权。
  */
-internal class DesktopCredentialCipher : CredentialCipher {
+class DesktopCredentialCipher : CredentialCipher {
 
     private val key: SecretKey by lazy { loadOrCreateKey() }
 

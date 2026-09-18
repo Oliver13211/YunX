@@ -48,3 +48,4 @@ dependencyResolutionManagement {
 rootProject.name = "YunX"
 
 include(":composeApp")
+include(":desktop")

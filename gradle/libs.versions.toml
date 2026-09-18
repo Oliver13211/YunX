@@ -10,12 +10,14 @@ room = "2.7.2"
 ksp = "2.2.20-2.0.2"
 material = "1.14.0"   # 官方 Material 主库，自带 com.google.android.material.color.utilities 包
 junit = "4.13.2"
+composeMultiplatform = "1.9.0"
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+compose-multiplatform = { id = "org.jetbrains.compose", version.ref = "composeMultiplatform" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 
 [libraries]
