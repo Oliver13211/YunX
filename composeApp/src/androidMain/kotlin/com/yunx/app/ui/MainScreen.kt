@@ -84,6 +84,8 @@ import androidx.core.content.ContextCompat
 import com.yunx.app.data.db.AppDatabase
 import com.yunx.app.data.db.DownloadTaskEntity
 import com.yunx.app.data.download.ChunkDownloader
+import com.yunx.app.data.db.get
+import com.yunx.app.data.security.AndroidKeystoreCredentialCipher
 import com.yunx.app.data.download.AndroidDownloadEnvironment
 import com.yunx.app.data.download.DownloadManager
 import com.yunx.app.data.backup.AuthBackupManager
@@ -254,7 +256,8 @@ fun MainScreen() {
             retryCountProvider = { settings.downloadRetryCount },
             // 锁屏保持下载 / 通知栏速度开关
             keepWhenLockedProvider = { settings.keepDownloadWhenLocked },
-            showSpeedProvider = { settings.notificationShowSpeed }
+            showSpeedProvider = { settings.notificationShowSpeed },
+            credentialCipher = AndroidKeystoreCredentialCipher()
         )
     }
     // Android 9- 写公共 Download 需要 WRITE_EXTERNAL_STORAGE 运行时授权：

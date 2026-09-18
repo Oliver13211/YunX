@@ -18,13 +18,11 @@
 
 package com.yunx.app.data.db
 
-import android.content.Context
 import androidx.room.Database
-import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
-import androidx.sqlite.db.SupportSQLiteDatabase
-import com.yunx.app.data.security.AndroidKeystoreCredentialCipher
+import androidx.sqlite.SQLiteConnection
+import androidx.sqlite.execSQL
 import com.yunx.app.data.security.CredentialCipher
 
 @Database(
@@ -50,7 +48,8 @@ abstract class AppDatabase : RoomDatabase() {
 
     abstract fun bookmarkDao(): BookmarkDao
 
-    private lateinit var credentialCipher: CredentialCipher
+    // 平台工厂在 build() 后注入（Android=Keystore，桌面=软件密钥，见 §10.3 SecureStore）
+    internal lateinit var credentialCipher: CredentialCipher
 
     fun quarkAccountDao(): QuarkAccountDao = SecureAccountDaos.quark(rawQuarkAccountDao(), credentialCipher)
     fun ucAccountDao(): UCAccountDao = SecureAccountDaos.uc(rawUcAccountDao(), credentialCipher)
@@ -60,28 +59,17 @@ abstract class AppDatabase : RoomDatabase() {
     fun pan123AccountDao(): Pan123AccountDao = SecureAccountDaos.pan123(rawPan123AccountDao(), credentialCipher)
 
     companion object {
-        @Volatile
-        private var instance: AppDatabase? = null
+        /** v9 起的所有迁移（平台工厂按需 addMigrations）。 */
+        // by lazy：迁移对象声明在下方，避免 companion 初始化顺序前向引用
+        internal val MIGRATIONS: Array<Migration> by lazy {
+            arrayOf(MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+        }
 
-        fun get(context: Context): AppDatabase =
-            instance ?: synchronized(this) {
-                instance ?: Room.databaseBuilder(
-                    context.applicationContext,
-                    AppDatabase::class.java,
-                    "yunx.db"
-                )
-                    .addMigrations(MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
-                    // 早期开发版（1-8）无可靠 schema；从 v9 起必须保留凭证和下载任务
-                    .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5, 6, 7, 8)
-                    .build()
-                    .also { database ->
-                        database.credentialCipher = AndroidKeystoreCredentialCipher()
-                        instance = database
-                    }
-            }
+        /** 早期开发版（1-8）无可靠 schema，允许破坏性重建；从 v9 起必须保留凭证和下载任务。 */
+        internal val LEGACY_DESTRUCTIVE_VERSIONS: IntArray = intArrayOf(1, 2, 3, 4, 5, 6, 7, 8)
 
         private val MIGRATION_9_10 = object : Migration(9, 10) {
-            override fun migrate(db: SupportSQLiteDatabase) {
+            override fun migrate(db: SQLiteConnection) {
                 db.execSQL("ALTER TABLE download_task ADD COLUMN requestHeadersJson TEXT NOT NULL DEFAULT '{}'")
                 db.execSQL("ALTER TABLE download_task ADD COLUMN chunkCount INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE download_task ADD COLUMN plannedTotalSize INTEGER NOT NULL DEFAULT 0")
@@ -90,19 +78,19 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         private val MIGRATION_10_11 = object : Migration(10, 11) {
-            override fun migrate(db: SupportSQLiteDatabase) {
+            override fun migrate(db: SQLiteConnection) {
                 db.execSQL("ALTER TABLE download_task ADD COLUMN platform TEXT NOT NULL DEFAULT ''")
             }
         }
 
         private val MIGRATION_11_12 = object : Migration(11, 12) {
-            override fun migrate(db: SupportSQLiteDatabase) {
+            override fun migrate(db: SQLiteConnection) {
                 db.execSQL("ALTER TABLE download_task ADD COLUMN avgSpeed INTEGER NOT NULL DEFAULT 0")
             }
         }
 
         private val MIGRATION_12_13 = object : Migration(12, 13) {
-            override fun migrate(db: SupportSQLiteDatabase) {
+            override fun migrate(db: SQLiteConnection) {
                 db.execSQL(
                     "CREATE TABLE IF NOT EXISTS `bookmark` (" +
                         "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +

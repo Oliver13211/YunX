@@ -22,7 +22,6 @@ import com.yunx.app.platform.YunXLog
 import com.yunx.app.util.LogRedactor
 import com.yunx.app.data.db.DownloadTaskDao
 import com.yunx.app.data.db.DownloadTaskEntity
-import com.yunx.app.data.security.AndroidKeystoreCredentialCipher
 import com.yunx.app.data.security.CredentialCipher
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -171,9 +170,10 @@ class DownloadManager(
     /** 锁屏后保持下载开关（开启时获取 WakeLock 维持 Wi-Fi/CPU） */
     private val keepWhenLockedProvider: () -> Boolean = { true },
     /** 通知栏显示下载速度开关（false 时仅显示通知，隐藏速度） */
-    private val showSpeedProvider: () -> Boolean = { true }
+    private val showSpeedProvider: () -> Boolean = { true },
+    /** 凭证加密器由平台工厂注入（Android=Keystore，桌面=软件密钥），下载请求头加密用 */
+    private val credentialCipher: CredentialCipher
 ) {
-    private val credentialCipher: CredentialCipher = AndroidKeystoreCredentialCipher()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     /** 当前实际下载中的任务数（用于最大同时下载任务数限制） */

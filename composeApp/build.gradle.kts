@@ -43,6 +43,10 @@ kotlin {
             dependencies {
                 // 协议层与下载引擎的 HTTP 栈（Android/桌面 JVM 均可用）
                 implementation("com.squareup.okhttp3:okhttp:4.12.0")
+                // Room KMP DAO 装饰器用到 Dispatchers/Flow
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+                // Room 2.7 起运行时为 KMP 构件（room-ktx 已并入 room-runtime）
+                implementation(libs.room.runtime)
             }
         }
 
@@ -83,6 +87,8 @@ kotlin {
                 implementation("org.jetbrains.compose.runtime:runtime:1.9.0")
                 // jvmShared 协议层用了 Android 平台内置的 org.json；桌面 JVM 需要等价构件（API 兼容）
                 implementation("org.json:json:20240303")
+                // Room KMP 桌面端内置 SQLite 驱动（纯 Kotlin，免 JNI/JDBC）
+                implementation("androidx.sqlite:sqlite-bundled:2.5.2")
             }
         }
         val jvmTest by getting {
@@ -114,6 +120,7 @@ kotlin {
 // Room 注解处理只作用于 Android 编译（KMP 下 ksp 需按目标声明）
 dependencies {
     add("kspAndroid", libs.room.compiler)
+    add("kspJvm", libs.room.compiler)
 }
 
 android {

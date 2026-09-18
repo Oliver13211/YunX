@@ -20,18 +20,12 @@ package com.yunx.app.data.security
 
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
-import android.util.Base64
+import com.yunx.app.platform.PlatformBase64
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
-
-internal interface CredentialCipher {
-    fun encrypt(plaintext: String, purpose: String): String
-    fun decrypt(stored: String, purpose: String): String
-    fun isEncrypted(stored: String): Boolean
-}
 
 /**
  * AES-GCM envelope encryption whose non-exportable key is held by Android Keystore.
@@ -51,8 +45,8 @@ internal class AndroidKeystoreCredentialCipher : CredentialCipher {
         val ciphertext = cipher.doFinal(plaintext.toByteArray(Charsets.UTF_8))
         return listOf(
             PREFIX,
-            Base64.encodeToString(cipher.iv, Base64.NO_WRAP),
-            Base64.encodeToString(ciphertext, Base64.NO_WRAP)
+            PlatformBase64.encodeToString(cipher.iv),
+            PlatformBase64.encodeToString(ciphertext)
         ).joinToString(":")
     }
 
@@ -62,8 +56,8 @@ internal class AndroidKeystoreCredentialCipher : CredentialCipher {
         require(parts.size == 4 && parts[0] == "yunx" && parts[1] == "v1") {
             "Unsupported encrypted credential format"
         }
-        val iv = Base64.decode(parts[2], Base64.NO_WRAP)
-        val ciphertext = Base64.decode(parts[3], Base64.NO_WRAP)
+        val iv = PlatformBase64.decode(parts[2])
+        val ciphertext = PlatformBase64.decode(parts[3])
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, iv))
         cipher.updateAAD(purpose.toByteArray(Charsets.UTF_8))
