@@ -14,7 +14,7 @@
 | 项 | 值 |
 |---|---|
 | 包名 | `com.yunx.app` |
-| 源码根 | `app/src/main/kotlin/com/yunx/app` |
+| 源码根 | `composeApp/src/androidMain/kotlin/com/yunx/app`（桌面共享层 `composeApp/src/jvmShared/kotlin/com/yunx/app`，见 §10） |
 | 语言 | Kotlin |
 | UI | Jetpack Compose + Material Design 3 |
 | 持久化 | Room（KSP 注解处理）+ SharedPreferences |

@@ -47,4 +47,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "YunX"
 
-include(":app")
+include(":composeApp")
