@@ -18,41 +18,63 @@
 
 package com.yunx.desktop
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.CloudDownload
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.InsertDriveFile
+import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Tray
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
@@ -66,12 +88,10 @@ import com.yunx.app.data.download.ChunkDownloader
 import com.yunx.app.data.download.DownloadManager
 import com.yunx.app.data.download.DownloadPlatform
 import com.yunx.app.data.network.HttpClients
-import com.yunx.app.data.network.Pan123Constants
-import com.yunx.app.data.network.QuarkConstants
-import com.yunx.app.data.network.model.DownloadLink
-import com.yunx.app.data.security.DesktopCredentialCipher
 import com.yunx.app.data.network.Pan123Api
+import com.yunx.app.data.network.Pan123Constants
 import com.yunx.app.data.network.QuarkApi
+import com.yunx.app.data.network.QuarkConstants
 import com.yunx.app.data.network.ShareLinkParser
 import com.yunx.app.data.network.SharePlatform
 import com.yunx.app.data.network.model.ShareFile
@@ -79,18 +99,14 @@ import com.yunx.app.data.network.model.ShareSession
 import com.yunx.app.data.repository.Pan123ResolveRepository
 import com.yunx.app.data.repository.QuarkResolveRepository
 import com.yunx.app.data.repository.ShareResolveRepository
+import com.yunx.app.data.security.DesktopCredentialCipher
 import kotlinx.coroutines.launch
+import java.awt.Desktop
+import java.net.URI
 
-/**
- * YunX Desktop 桌面壳（Phase 2 里程碑）：
- * 登录区（夸克 Cookie / 123 authorToken 粘贴）→ 解析区（链接 → 文件列表 → 直链）。
- * 登录态存 Room（与 Android 同构的 SecureAccountDaos 加密 DAO），Phase 4 起接入 KCEF 网页登录。
- */
-
-/** 各平台分享根目录 fid（对齐 Android ResolveViewModel.currentDefaultDirFid）。 */
-private fun rootDirFid(platform: SharePlatform): String = when (platform) {
-    SharePlatform.BAIDU -> ""
-    else -> "0" // QuarkConstants.DEFAULT_PDIR_FID / UC / XUNLEI / C139 / PAN123 均为 "0"
+/** 系统浏览器打开登录页（Phase 4 方案B：网页登录 → 回贴 Cookie/Token；KCEF 待网络条件允许后接入）。 */
+private fun openBrowser(url: String) {
+    runCatching { Desktop.getDesktop().browse(URI(url)) }
 }
 
 internal fun formatSize(bytes: Long): String = when {
@@ -98,6 +114,12 @@ internal fun formatSize(bytes: Long): String = when {
     bytes >= 1L shl 20 -> "%.2f MB".format(bytes.toDouble() / (1L shl 20))
     bytes >= 1L shl 10 -> "%.1f KB".format(bytes.toDouble() / (1L shl 10))
     else -> "$bytes B"
+}
+
+/** 各平台分享根目录 fid（对齐 Android ResolveViewModel.currentDefaultDirFid）。 */
+internal fun rootDirFid(platform: SharePlatform): String = when (platform) {
+    SharePlatform.BAIDU -> ""
+    else -> "0"
 }
 
 /** 程序化托盘图标（避免引入图片资源）：紫色圆点，对齐 Material 主色。 */
@@ -117,10 +139,19 @@ fun main() = application {
     Window(
         onCloseRequest = ::exitApplication,
         title = "YunX Desktop（开源版 · AGPL-3.0）",
-        state = rememberWindowState()
+        state = rememberWindowState(width = 900.dp, height = 780.dp)
     ) {
-        MaterialTheme {
-            DesktopApp(trayText)
+        MaterialTheme(
+            colorScheme = lightColorScheme(
+                primary = Color(0xFF6750A4),
+                secondary = Color(0xFF625B71),
+                surfaceVariant = Color(0xFFE7E0EC),
+                background = Color(0xFFF7F4FA)
+            )
+        ) {
+            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                DesktopApp(trayText)
+            }
         }
     }
 }
@@ -156,8 +187,12 @@ private fun DesktopApp(trayText: MutableState<String>) {
     var panStatus by remember { mutableStateOf("未登录") }
 
     LaunchedEffect(Unit) {
-        quarkDao.getAccount()?.let { if (it.cookie.isNotBlank()) { quarkCookie = it.cookie; quarkStatus = "已登录（读取自本地库）" } }
-        pan123Dao.getAccount()?.let { if (it.accessToken.isNotBlank()) { panToken = it.accessToken; panStatus = "已登录（读取自本地库）" } }
+        quarkDao.getAccount()?.let {
+            if (it.cookie.isNotBlank()) { quarkCookie = it.cookie; quarkStatus = "已登录（读取自本地加密库）" }
+        }
+        pan123Dao.getAccount()?.let {
+            if (it.accessToken.isNotBlank()) { panToken = it.accessToken; panStatus = "已登录（读取自本地加密库）" }
+        }
     }
 
     var shareText by remember { mutableStateOf("") }
@@ -168,196 +203,336 @@ private fun DesktopApp(trayText: MutableState<String>) {
     var sessionRepo by remember { mutableStateOf<ShareResolveRepository?>(null) }
     var sessionCookie by remember { mutableStateOf("") }
     var sessionPlatform by remember { mutableStateOf<SharePlatform?>(null) }
+    var currentDirFid by remember { mutableStateOf("0") }
+    val dirStack = remember { mutableStateListOf<Pair<String, String>>() } // fid to 名称
     var directLink by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
 
-    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("YunX Desktop", style = MaterialTheme.typography.titleLarge)
-        Text(
-            "个人学习与技术交流用途，请遵守 AGPL-3.0 与上游免责声明；不支持离线使用以外的任何商业用途。",
-            style = MaterialTheme.typography.bodySmall
-        )
+    val allTasks by db.downloadTaskDao().observeAll().collectAsState(initial = emptyList())
+    LaunchedEffect(allTasks) {
+        val active = allTasks.count { it.status == DownloadTaskEntity.STATUS_DOWNLOADING }
+        trayText.value = if (active > 0) "YunX Desktop · $active 个下载中" else "YunX Desktop"
+    }
 
-        // ---------- 登录区 ----------
-        Text("网盘登录", style = MaterialTheme.typography.titleMedium)
-        OutlinedTextField(
-            value = quarkCookie,
-            onValueChange = { quarkCookie = it },
-            label = { Text("夸克 Cookie（浏览器登录后整段粘贴）") },
-            modifier = Modifier.fillMaxWidth()
-        )
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = {
-                val cookie = quarkCookie.trim()
-                if (cookie.isEmpty()) { quarkStatus = "Cookie 为空"; return@Button }
-                scope.launch {
-                    runCatching { quarkDao.upsert(QuarkAccountEntity(cookie = cookie)) }
-                        .onSuccess { quarkStatus = "夸克 Cookie 已加密保存" }
-                        .onFailure { quarkStatus = "保存失败：${it.message}" }
+    /** 加载指定目录（进入子目录 / 返回上级共用）。 */
+    fun loadFiles(dirFid: String) {
+        val s = session ?: return
+        val repo = sessionRepo ?: return
+        resolving = true
+        scope.launch {
+            runCatching { repo.listFiles(s, dirFid, sessionCookie).getOrThrow() }
+                .onSuccess {
+                    files = it
+                    currentDirFid = dirFid
+                    message = "「${s.title}」当前目录 ${it.size} 项"
                 }
-            }) { Text("保存夸克 Cookie") }
-            Text(quarkStatus, style = MaterialTheme.typography.bodySmall)
+                .onFailure {
+                    it.printStackTrace()
+                    message = "列取文件失败：${it.message}"
+                }
+            resolving = false
         }
-        OutlinedTextField(
-            value = panToken,
-            onValueChange = { panToken = it },
-            label = { Text("123 云盘 authorToken / JWT（网页登录后粘贴）") },
-            modifier = Modifier.fillMaxWidth()
-        )
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = {
-                val token = panToken.trim()
-                if (token.isEmpty()) { panStatus = "Token 为空"; return@Button }
-                scope.launch {
-                    runCatching { pan123Dao.upsert(Pan123AccountEntity(accessToken = token)) }
-                        .onSuccess { panStatus = "123 Token 已加密保存" }
-                        .onFailure { panStatus = "保存失败：${it.message}" }
-                }
-            }) { Text("保存 123 Token") }
-            Text(panStatus, style = MaterialTheme.typography.bodySmall)
+    }
+
+    Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        // ---------- 标题 ----------
+        Column {
+            Text("YunX Desktop", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text(
+                "网盘分享解析与高速下载 · 开源（AGPL-3.0）· 仅供个人学习与技术交流",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
 
-        HorizontalDivider()
-
-        // ---------- 解析区 ----------
-        Text("分享解析", style = MaterialTheme.typography.titleMedium)
-        OutlinedTextField(
-            value = shareText,
-            onValueChange = { shareText = it },
-            label = { Text("粘贴分享链接（可含提取码）") },
-            modifier = Modifier.fillMaxWidth()
-        )
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(
-                enabled = !resolving,
-                onClick = {
-                    val parsed = ShareLinkParser.parse(shareText)
-                    if (parsed == null) { message = "无法识别分享链接"; return@Button }
-                    val repo: ShareResolveRepository = when (parsed.platform) {
-                        SharePlatform.QUARK -> QuarkResolveRepository(quarkApi)
-                        SharePlatform.PAN123 -> Pan123ResolveRepository(pan123Api) { panToken.trim().ifBlank { null } }
-                        else -> { message = "桌面版当前仅支持夸克 / 123 云盘链接"; return@Button }
-                    }
-                    val useCookie = when (parsed.platform) {
-                        SharePlatform.QUARK -> quarkCookie.trim()
-                        SharePlatform.PAN123 -> panToken.trim()
-                        else -> ""
-                    }
-                    if (useCookie.isEmpty()) { message = "请先登录（保存 Cookie/Token）"; return@Button }
-                    resolving = true
-                    message = "解析中…"
-                    files = emptyList()
-                    directLink = ""
-                    scope.launch {
-                        val result = runCatching {
-                            repo.createSession(shareText, parsed.pwd, useCookie).getOrThrow()
+        // ---------- 登录卡 ----------
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("① 网盘登录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                LoginRow(
+                    label = "夸克网盘",
+                    status = quarkStatus,
+                    loginUrl = QuarkConstants.LOGIN_URL,
+                    hint = "网页登录后：F12 → 网络 → 任一请求 → 复制整段 Cookie 粘贴到此处",
+                    value = quarkCookie,
+                    onValueChange = { quarkCookie = it },
+                    onSave = {
+                        val cookie = quarkCookie.trim()
+                        if (cookie.isEmpty()) { quarkStatus = "Cookie 为空"; return@LoginRow }
+                        scope.launch {
+                            runCatching { quarkDao.upsert(QuarkAccountEntity(cookie = cookie)) }
+                                .onSuccess { quarkStatus = "已保存（AES-GCM 加密）" }
+                                .onFailure { quarkStatus = "保存失败：${it.message}" }
                         }
-                        result.onSuccess { s ->
-                            session = s
-                            sessionRepo = repo
-                            sessionCookie = useCookie
-                            sessionPlatform = parsed.platform
-                            repo.listFiles(s, rootDirFid(parsed.platform), useCookie)
-                                .onSuccess { message = "「${s.title}」共 ${it.size} 项（根目录）"; files = it }
-                                .onFailure { message = "列取文件失败：${it.message}" }
-                        }.onFailure {
-                            it.printStackTrace()
-                            message = "解析失败：${it.message}"
-                        }
-                        resolving = false
                     }
-                }
-            ) { Text(if (resolving) "解析中…" else "解析") }
-            if (resolving) CircularProgressIndicator(Modifier.padding(start = 4.dp))
-            Text(message, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        }
-
-        if (directLink.isNotBlank()) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("直链：", style = MaterialTheme.typography.bodySmall)
-                Text(directLink, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                TextButton(onClick = { clipboard.setText(AnnotatedString(directLink)) }) { Text("复制") }
-                TextButton(onClick = { directLink = "" }) { Text("关闭") }
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+                LoginRow(
+                    label = "123 云盘",
+                    status = panStatus,
+                    loginUrl = "https://yun.123pan.com/",
+                    hint = "网页登录后：F12 → 应用/网络中复制 authorToken（JWT）粘贴到此处",
+                    value = panToken,
+                    onValueChange = { panToken = it },
+                    onSave = {
+                        val token = panToken.trim()
+                        if (token.isEmpty()) { panStatus = "Token 为空"; return@LoginRow }
+                        scope.launch {
+                            runCatching { pan123Dao.upsert(Pan123AccountEntity(accessToken = token)) }
+                                .onSuccess { panStatus = "已保存（AES-GCM 加密）" }
+                                .onFailure { panStatus = "保存失败：${it.message}" }
+                        }
+                    }
+                )
             }
         }
 
-        // ---------- 文件列表 ----------
+        // ---------- 解析卡 ----------
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("② 分享解析", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = shareText,
+                        onValueChange = { shareText = it },
+                        label = { Text("粘贴分享链接（可含提取码）") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        leadingIcon = { Icon(Icons.Outlined.Link, contentDescription = null) }
+                    )
+                    Button(
+                        enabled = !resolving,
+                        onClick = {
+                            val parsed = ShareLinkParser.parse(shareText)
+                            if (parsed == null) { message = "无法识别分享链接"; return@Button }
+                            val repo: ShareResolveRepository = when (parsed.platform) {
+                                SharePlatform.QUARK -> QuarkResolveRepository(quarkApi)
+                                SharePlatform.PAN123 -> Pan123ResolveRepository(pan123Api) { panToken.trim().ifBlank { null } }
+                                else -> { message = "桌面版当前仅支持夸克 / 123 云盘链接"; return@Button }
+                            }
+                            val useCookie = when (parsed.platform) {
+                                SharePlatform.QUARK -> quarkCookie.trim()
+                                SharePlatform.PAN123 -> panToken.trim()
+                                else -> ""
+                            }
+                            if (useCookie.isEmpty()) { message = "请先登录（保存 Cookie/Token）"; return@Button }
+                            resolving = true
+                            message = "解析中…"
+                            files = emptyList()
+                            directLink = ""
+                            dirStack.clear()
+                            currentDirFid = rootDirFid(parsed.platform)
+                            scope.launch {
+                                runCatching {
+                                    // 与 Android 语义一致：传原始文本，仓库层内部自行解析
+                                    repo.createSession(shareText, parsed.pwd, useCookie).getOrThrow()
+                                }.onSuccess { s ->
+                                    session = s
+                                    sessionRepo = repo
+                                    sessionCookie = useCookie
+                                    sessionPlatform = parsed.platform
+                                    repo.listFiles(s, currentDirFid, useCookie)
+                                        .onSuccess {
+                                            message = "「${s.title}」共 ${it.size} 项（根目录）"
+                                            files = it
+                                        }
+                                        .onFailure {
+                                            it.printStackTrace()
+                                            message = "列取文件失败：${it.message}"
+                                        }
+                                }.onFailure {
+                                    it.printStackTrace()
+                                    message = "解析失败：${it.message}"
+                                }
+                                resolving = false
+                            }
+                        }
+                    ) {
+                        if (resolving) {
+                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text(if (resolving) "解析中" else "解析")
+                    }
+                }
+                Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+
+        // ---------- 文件卡 ----------
         val s = session
         if (s != null) {
-            LazyColumn(Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                items(files) { file ->
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(file.fname, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(
-                                if (file.isdir) "目录" else formatSize(file.fsize),
-                                style = MaterialTheme.typography.bodySmall
+            Card(Modifier.fillMaxWidth().weight(1f), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Column(Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("③ 分享内容", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            dirStack.joinToString(" / ") { it.second }.ifBlank { "根目录" },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (dirStack.isNotEmpty()) {
+                            OutlinedButton(onClick = {
+                                val popped = dirStack.removeAt(dirStack.lastIndex)
+                                loadFiles(popped.first)
+                            }) {
+                                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = null, Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("上级")
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.weight(1f)) {
+                        items(files) { file ->
+                            FileRow(
+                                file = file,
+                                resolving = resolving,
+                                onEnterDir = {
+                                    dirStack.add(file.fid to file.fname)
+                                    loadFiles(file.fid)
+                                },
+                                onGetLink = {
+                                    val repo = sessionRepo ?: return@FileRow
+                                    resolving = true; directLink = ""
+                                    scope.launch {
+                                        runCatching { repo.getShareDownloadLink(s, file, sessionCookie).getOrThrow() }
+                                            .onSuccess {
+                                                directLink = it.downloadUrl
+                                                clipboard.setText(AnnotatedString(it.downloadUrl))
+                                                message = "直链已复制到剪贴板"
+                                            }
+                                            .onFailure { message = "取直链失败：${it.message}" }
+                                        resolving = false
+                                    }
+                                },
+                                onDownload = {
+                                    val repo = sessionRepo ?: return@FileRow
+                                    val platform = sessionPlatform ?: return@FileRow
+                                    resolving = true
+                                    scope.launch {
+                                        runCatching {
+                                            val link = repo.getShareDownloadLink(s, file, sessionCookie).getOrThrow()
+                                            // 请求头语义对齐 Android ResolveViewModel.enqueueDownload（§5.3 CDN 约束）
+                                            val platformConst =
+                                                if (platform == SharePlatform.PAN123) DownloadPlatform.PAN123 else DownloadPlatform.QUARK
+                                            val headers = if (platform == SharePlatform.PAN123) {
+                                                mapOf(
+                                                    "User-Agent" to Pan123Constants.WEB_UA,
+                                                    "Referer" to Pan123Constants.DOWNLOAD_REFERER
+                                                )
+                                            } else {
+                                                mapOf(
+                                                    "Cookie" to sessionCookie,
+                                                    "User-Agent" to QuarkConstants.API_USER_AGENT,
+                                                    "Referer" to QuarkConstants.DOWNLOAD_REFERER
+                                                )
+                                            }
+                                            downloadManager.enqueue(link.downloadUrl, link.filename, headers, link.size, platformConst)
+                                        }.onSuccess {
+                                            message = "已加入下载任务"
+                                            directLink = ""
+                                        }.onFailure {
+                                            it.printStackTrace()
+                                            message = "加入下载失败：${it.message}"
+                                        }
+                                        resolving = false
+                                    }
+                                }
                             )
                         }
-                        TextButton(
-                            enabled = !file.isdir && !resolving,
-                            onClick = {
-                                val repo = sessionRepo ?: return@TextButton
-                                resolving = true; directLink = ""
-                                scope.launch {
-                                    runCatching {
-                                        repo.getShareDownloadLink(s, file, sessionCookie).getOrThrow()
-                                    }.onSuccess {
-                                        directLink = it.downloadUrl
-                                        message = "已取得直链（转存清理由关闭/删除任务时处理）"
-                                    }.onFailure { message = "取直链失败：${it.message}" }
-                                    resolving = false
-                                }
-                            }
-                        ) { Text("取直链") }
-                        TextButton(
-                            enabled = !file.isdir && !resolving,
-                            onClick = {
-                                val repo = sessionRepo ?: return@TextButton
-                                val platform = sessionPlatform ?: return@TextButton
-                                resolving = true
-                                scope.launch {
-                                    runCatching {
-                                        val link = repo.getShareDownloadLink(s, file, sessionCookie).getOrThrow()
-                                        // 请求头语义对齐 Android ResolveViewModel.enqueueDownload（§5.3 CDN 约束）
-                                        val platformConst = if (platform == SharePlatform.PAN123) DownloadPlatform.PAN123 else DownloadPlatform.QUARK
-                                        val headers = if (platform == SharePlatform.PAN123) {
-                                            mapOf("User-Agent" to Pan123Constants.WEB_UA, "Referer" to Pan123Constants.DOWNLOAD_REFERER)
-                                        } else {
-                                            mapOf(
-                                                "Cookie" to sessionCookie,
-                                                "User-Agent" to QuarkConstants.API_USER_AGENT,
-                                                "Referer" to QuarkConstants.DOWNLOAD_REFERER
-                                            )
-                                        }
-                                        downloadManager.enqueue(link.downloadUrl, link.filename, headers, link.size, platformConst)
-                                        link
-                                    }.onSuccess {
-                                        message = "已加入下载任务，见下方下载管理"
-                                        directLink = ""
-                                    }.onFailure {
-                                        it.printStackTrace()
-                                        message = "加入下载失败：${it.message}"
-                                    }
-                                    resolving = false
-                                }
-                            }
-                        ) { Text("下载") }
+                    }
+                    if (directLink.isNotBlank()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text("直链：$directLink", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        TextButton(onClick = { directLink = "" }) { Text("关闭直链显示") }
                     }
                 }
             }
         }
 
-        // ---------- 下载管理 ----------
-        val allTasks by db.downloadTaskDao().observeAll().collectAsState(initial = emptyList())
-        LaunchedEffect(allTasks) {
-            val active = allTasks.count { it.status == DownloadTaskEntity.STATUS_DOWNLOADING }
-            trayText.value = if (active > 0) "YunX Desktop · $active 个下载中" else "YunX Desktop"
+        // ---------- 下载卡 ----------
+        Card(Modifier.fillMaxWidth().height(250.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+            Column(Modifier.padding(16.dp)) {
+                DownloadsSection(db, downloadManager, settings)
+            }
         }
-        DownloadsSection(db, downloadManager, settings)
+    }
+}
+
+/** 登录行：平台名 + 打开登录页 + 凭证粘贴 + 保存。 */
+@Composable
+private fun LoginRow(
+    label: String,
+    status: String,
+    loginUrl: String,
+    hint: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    onSave: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+            TextButton(onClick = { openBrowser(loginUrl) }) {
+                Icon(Icons.Outlined.CloudDownload, contentDescription = null, Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("打开登录页")
+            }
+            Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text(hint, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            singleLine = true
+        )
+        TextButton(onClick = onSave) { Text("保存凭证") }
+    }
+}
+
+/** 文件行：目录可点击进入，文件支持取直链/下载。 */
+@Composable
+private fun FileRow(
+    file: ShareFile,
+    resolving: Boolean,
+    onEnterDir: () -> Unit,
+    onGetLink: () -> Unit,
+    onDownload: () -> Unit
+) {
+    Surface(
+        Modifier.fillMaxWidth().clickable(enabled = file.isdir, onClick = onEnterDir),
+        shape = RoundedCornerShape(10.dp),
+        color = if (file.isdir) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surface
+    ) {
+        Row(
+            Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(
+                imageVector = if (file.isdir) Icons.Outlined.Folder else Icons.Outlined.InsertDriveFile,
+                contentDescription = null,
+                tint = if (file.isdir) Color(0xFFB892E0) else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(22.dp)
+            )
+            Column(Modifier.weight(1f)) {
+                Text(file.fname, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    if (file.isdir) "目录 · 点击进入" else formatSize(file.fsize),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (file.isdir) {
+                Text("进入", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            } else {
+                TextButton(enabled = !resolving, onClick = onGetLink) { Text("直链") }
+                OutlinedButton(enabled = !resolving, onClick = onDownload) { Text("下载") }
+            }
+        }
     }
 }

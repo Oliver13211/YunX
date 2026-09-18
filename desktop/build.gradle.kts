@@ -24,6 +24,7 @@ kotlin {
                 implementation(compose.runtime)
                 implementation(compose.foundation)
                 implementation(compose.material3)
+                implementation(compose.materialIconsExtended)
                 implementation(compose.ui)
                 // 桌面窗口/输入/渲染后端（skiko），Window/application 所需
                 implementation(compose.desktop.currentOs)
