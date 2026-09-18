@@ -18,7 +18,7 @@
 
 package com.yunx.app.data.download
 
-import android.util.Log
+import com.yunx.app.platform.YunXLog
 import com.yunx.app.util.LogRedactor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -95,7 +95,7 @@ class ChunkDownloader(private val clientProvider: () -> OkHttpClient) {
             try {
                 runCatching {
                     call.execute().use { response ->
-                        Log.d(TAG, "getTotalSize: range=$withRange code=${response.code} ct=${response.header("Content-Type")} origin=${LogRedactor.url(url)}")
+                        YunXLog.d(TAG, "getTotalSize: range=$withRange code=${response.code} ct=${response.header("Content-Type")} origin=${LogRedactor.url(url)}")
                         // ★ 防盗链/过期/错误页（HTML）直接视为无法取大小，回退流式/单流
                         if (response.header("Content-Type").orEmpty().contains("text/html", ignoreCase = true)) {
                             return@use null
@@ -148,7 +148,7 @@ class ChunkDownloader(private val clientProvider: () -> OkHttpClient) {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: IOException) {
-                Log.w(TAG, "downloadChunk: task=$taskId 尝试${attempt + 1} IO异常: ${e.message}")
+                YunXLog.w(TAG, "downloadChunk: task=$taskId 尝试${attempt + 1} IO异常: ${e.message}")
                 if (!isActive) throw CancellationException("下载被取消", e)
                 null
             }
@@ -194,14 +194,14 @@ class ChunkDownloader(private val clientProvider: () -> OkHttpClient) {
             return call.execute().use { response ->
                 // 防盗链/广告回退页：直接判失败
                 if (response.header("Content-Type").orEmpty().contains("text/html", ignoreCase = true)) {
-                    Log.w(TAG, "downloadChunk: task=$taskId 返回 text/html（疑似广告/错误页），终止")
+                    YunXLog.w(TAG, "downloadChunk: task=$taskId 返回 text/html（疑似广告/错误页），终止")
                     return@use ChunkResult.FAILED
                 }
                 when (val code = response.code) {
                     206 -> {
                         val requestedEnd = if (unknownTotal) null else end
                         if (!HttpRangePolicy.matches(response.header("Content-Range"), from, requestedEnd)) {
-                            Log.w(TAG, "downloadChunk: task=$taskId Content-Range 与请求不一致")
+                            YunXLog.w(TAG, "downloadChunk: task=$taskId Content-Range 与请求不一致")
                             return@use ChunkResult.FAILED
                         }
                         val body = response.body ?: return@use ChunkResult.FAILED
@@ -210,17 +210,17 @@ class ChunkDownloader(private val clientProvider: () -> OkHttpClient) {
                         val written = writeSlice(body.byteStream(), partFile, existing, expected, onBytes)
                         // ★ 校验：206 也必须写满预期字节，否则视为失败（防空洞/损坏）
                         if (!unknownTotal && written != expected) {
-                            Log.w(TAG, "downloadChunk: task=$taskId 分片写入不足 written=$written 预期=$expected")
+                            YunXLog.w(TAG, "downloadChunk: task=$taskId 分片写入不足 written=$written 预期=$expected")
                             return@use ChunkResult.FAILED
                         }
                         ChunkResult.OK
                     }
                     200 -> {
-                        Log.w(TAG, "downloadChunk: task=$taskId Range 请求返回 200，拒绝按分片写入")
+                        YunXLog.w(TAG, "downloadChunk: task=$taskId Range 请求返回 200，拒绝按分片写入")
                         ChunkResult.RANGE_IGNORED
                     }
                     else -> {
-                        Log.w(TAG, "downloadChunk: task=$taskId 非预期状态码 $code")
+                        YunXLog.w(TAG, "downloadChunk: task=$taskId 非预期状态码 $code")
                         ChunkResult.FAILED
                     }
                 }
@@ -272,7 +272,7 @@ class ChunkDownloader(private val clientProvider: () -> OkHttpClient) {
         // 完整 GET 的响应从字节 0 开始，必须丢弃任何旧前缀，禁止“旧前缀 + 完整响应”拼接损坏。
         val existing = 0L
         if (partFile.exists()) RandomAccessFile(partFile, "rw").use { it.setLength(0) }
-        Log.d(TAG, "downloadFull: task=$taskId 完整下载 origin=${LogRedactor.url(url)} total=$total")
+        YunXLog.d(TAG, "downloadFull: task=$taskId 完整下载 origin=${LogRedactor.url(url)} total=$total")
         val request = Request.Builder()
             .url(url)
             .apply { headers.forEach { (k, v) -> header(k, v) } }
@@ -284,7 +284,7 @@ class ChunkDownloader(private val clientProvider: () -> OkHttpClient) {
             call.execute().use { response ->
                 // ★ 最终响应若是 HTML（防盗链/过期/错误页），直接失败，绝不存盘
                 if (response.header("Content-Type").orEmpty().contains("text/html", ignoreCase = true)) {
-                    Log.w(TAG, "downloadFull: task=$taskId 返回 text/html（疑似过期/防盗链/错误页），终止")
+                    YunXLog.w(TAG, "downloadFull: task=$taskId 返回 text/html（疑似过期/防盗链/错误页），终止")
                     throw IllegalStateException("下载失败：链接已失效或需要 Referer（返回 HTML 页）")
                 }
                 if (!response.isSuccessful) throw IllegalStateException("下载失败 HTTP ${response.code}")
@@ -311,7 +311,7 @@ class ChunkDownloader(private val clientProvider: () -> OkHttpClient) {
                 }
                 // 已知总大小：落盘必须恰好达到 total，否则视为失败（防空洞/截断损坏）
                 if (total > 0 && existing + written < total) {
-                    Log.w(TAG, "downloadFull: task=$taskId 写入不足 written=${existing + written} 预期=$total")
+                    YunXLog.w(TAG, "downloadFull: task=$taskId 写入不足 written=${existing + written} 预期=$total")
                     return@use false
                 }
                 true
@@ -321,7 +321,7 @@ class ChunkDownloader(private val clientProvider: () -> OkHttpClient) {
         } catch (e: IllegalStateException) {
             throw e
         } catch (e: IOException) {
-            Log.w(TAG, "downloadFull: task=$taskId IO异常: ${e.message}")
+            YunXLog.w(TAG, "downloadFull: task=$taskId IO异常: ${e.message}")
             if (!isActive) throw CancellationException("下载被取消", e)
             false
         } finally {
@@ -349,7 +349,7 @@ class ChunkDownloader(private val clientProvider: () -> OkHttpClient) {
             }
             true
         }.getOrDefault(false)
-        Log.d(TAG, "mergeChunks: parts=${chunkFiles.size} target=$target ok=$ok")
+        YunXLog.d(TAG, "mergeChunks: parts=${chunkFiles.size} target=$target ok=$ok")
         ok
     }
 }

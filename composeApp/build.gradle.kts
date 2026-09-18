@@ -40,6 +40,10 @@ kotlin {
         val commonMain by getting
         val jvmShared by creating {
             dependsOn(commonMain)
+            dependencies {
+                // 协议层与下载引擎的 HTTP 栈（Android/桌面 JVM 均可用）
+                implementation("com.squareup.okhttp3:okhttp:4.12.0")
+            }
         }
 
         val androidMain by getting {
@@ -77,6 +81,8 @@ kotlin {
                 // Compose 编译器插件对全项目所有 Kotlin 编译生效，jvm 目标类路径上也必须有
                 // Compose runtime，否则版本检查直接报错；Phase 2 引入 org.jetbrains.compose 插件后统一接管
                 implementation("org.jetbrains.compose.runtime:runtime:1.9.0")
+                // jvmShared 协议层用了 Android 平台内置的 org.json；桌面 JVM 需要等价构件（API 兼容）
+                implementation("org.json:json:20240303")
             }
         }
         val jvmTest by getting {

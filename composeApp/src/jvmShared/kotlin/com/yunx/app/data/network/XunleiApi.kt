@@ -293,7 +293,8 @@ class XunleiApi(
     fun jwtExp(token: String): Long = runCatching {
         val payload = token.split(".").getOrNull(1) ?: return@runCatching 0L
         val json = String(
-            android.util.Base64.decode(payload, android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING)
+            // JWT 为 URL-safe Base64；PlatformBase64.decode 按 -/_ 字符自动切换 URL 解码器
+            com.yunx.app.platform.PlatformBase64.decode(payload)
         )
         JSONObject(json).optLong("exp")
     }.getOrDefault(0L)
@@ -302,7 +303,8 @@ class XunleiApi(
     private fun jwtSub(token: String): String = runCatching {
         val payload = token.split(".").getOrNull(1) ?: return@runCatching ""
         val json = String(
-            android.util.Base64.decode(payload, android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING)
+            // JWT 为 URL-safe Base64；PlatformBase64.decode 按 -/_ 字符自动切换 URL 解码器
+            com.yunx.app.platform.PlatformBase64.decode(payload)
         )
         JSONObject(json).optString("sub")
     }.getOrDefault("")
