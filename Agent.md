@@ -379,12 +379,12 @@ desktop/                        # Compose Multiplatform 桌面入口与打包（
 
 | 接缝 | 用途 | Android actual | 桌面 actual |
 |---|---|---|---|
-| `PlatformBase64` | Base64 编解码（minSdk 23 无 java.util.Base64） | `android.util.Base64` | `java.util.Base64` |
-| `YunXLog` | 日志（调用侧已过 LogRedactor） | `android.util.Log` | `java.util.logging` |
-| `KeyValueStore` | 轻量 KV（设备指纹等） | `SharedPreferences` | `java.util.prefs.Preferences` |
-| `DownloadEnvironment` | 缓存目录 / 省电模式查询 | `Context` 系 API | `java.io.tmpdir` / 恒否 |
-| `SecureStore` | 凭证安全存取 | Android Keystore（沿用 `CredentialCipher`） | Keychain / DPAPI / Secret Service（Phase 4） |
-| `CookieSource` | 登录态 Cookie 来源 | WebView CookieManager（Phase 4） | KCEF CookieManager（Phase 4） |
+| `PlatformBase64` | Base64 编解码（minSdk 23 无 java.util.Base64） | `android.util.Base64`（NO_WRAP/DEFAULT） | `java.util.Base64`（标准/URL-safe 自动切换） |
+| `YunXLog` | 日志：d/i/w/e（e 带 Throwable）；调用侧已过 LogRedactor | `android.util.Log` | `java.util.logging` |
+| `KeyValueStore` | 轻量 KV（设备指纹等，文件名沿用 `xunlei_device_fp`） | `SharedPreferences` | `java.util.prefs.Preferences` |
+| `DownloadEnvironment` | 分片/临时缓存目录、WakeLock 保活、前台服务通知三钩子（start/stop/update）、保存/删除已下载文件 | `Context` 系 API（`AndroidDownloadEnvironment`，委托 DownloadService/DownloadSaver） | 桌面实现待 Phase 2/3（通知钩子首版空实现） |
+| `SecureStore` | 凭证安全存取（Phase 4） | Android Keystore（沿用 `CredentialCipher`） | Keychain / DPAPI / Secret Service（Phase 4） |
+| `CookieSource` | 登录态 Cookie 来源（Phase 4） | WebView CookieManager（Phase 4） | KCEF CookieManager（Phase 4） |
 
 ### 10.4 版本锚点（升级须整体一致并双端回归）
 
