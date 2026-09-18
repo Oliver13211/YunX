@@ -2,9 +2,9 @@ name: Android CI
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "master", "desktop" ]
   pull_request:
-    branches: [ "master" ]
+    branches: [ "master", "desktop" ]
 
 jobs:
   build:
@@ -40,17 +40,20 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      # 完整构建 debug APK（验证编译链路 + 产出可安装包）
+      # 完整构建 debug APK（验证编译链路 + 产出可安装包）；KMP 化后模块名为 composeApp
       - name: Build debug APK
-        run: ./gradlew assembleDebug
+        run: ./gradlew :composeApp:assembleDebug
 
-      - name: Run unit tests
-        run: ./gradlew testDebugUnitTest
+      - name: Run Android unit tests
+        run: ./gradlew :composeApp:testDebugUnitTest
+
+      - name: Run desktop JVM tests
+        run: ./gradlew :composeApp:jvmTest
 
       # 上传 debug APK 产物（PR 评论 / Actions 页面可下载）
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: app-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: composeApp/build/outputs/apk/debug/composeApp-debug.apk
           if-no-files-found: error
