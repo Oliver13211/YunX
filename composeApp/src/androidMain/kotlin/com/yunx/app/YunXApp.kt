@@ -82,7 +82,8 @@ class YunXApp : Application() {
             }
         }
         scheduleDeepScan(this)
-        com.yunx.app.data.network.XunleiDeviceFingerprint.init(this)
+        com.yunx.app.platform.initAndroidKeyValueStore(this)
+        com.yunx.app.data.network.XunleiDeviceFingerprint.init()
     }
 }
 

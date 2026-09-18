@@ -18,7 +18,7 @@
 
 package com.yunx.app.data.network
 
-import android.content.Context
+import com.yunx.app.platform.defaultKeyValueStore
 import java.security.MessageDigest
 import kotlin.random.Random
 
@@ -32,7 +32,6 @@ import kotlin.random.Random
  */
 object XunleiDeviceFingerprint {
 
-    private const val PREFS = "xunlei_device_fp"
     private const val KEY_ID = "device_id"
     private const val KEY_PEER = "peer_id"
     private const val KEY_SIGN = "device_sign"
@@ -54,28 +53,25 @@ object XunleiDeviceFingerprint {
     @Volatile
     private var deviceSign: String = XunleiConstants.DEVICE_SIGN
 
-    /** 进程启动时调用一次（Application.onCreate）；幂等，可重复调用 */
-    fun init(context: Context) {
+    /** 进程启动时调用一次（Application.onCreate / 桌面 main）；幂等，可重复调用 */
+    fun init() {
         if (initialized) return
         synchronized(this) {
             if (initialized) return
-            val prefs = context.applicationContext
-                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            val savedId = prefs.getString(KEY_ID, null)
+            val store = defaultKeyValueStore()
+            val savedId = store.getString(KEY_ID)
             if (savedId != null) {
                 deviceId = savedId
-                peerId = prefs.getString(KEY_PEER, XunleiConstants.PEER_ID)!!
-                deviceSign = prefs.getString(KEY_SIGN, XunleiConstants.DEVICE_SIGN)!!
+                peerId = store.getString(KEY_PEER) ?: XunleiConstants.PEER_ID
+                deviceSign = store.getString(KEY_SIGN) ?: XunleiConstants.DEVICE_SIGN
             } else {
                 // 首次启动：生成唯一设备指纹并持久化
                 val newId = randomHex(32)
                 val newPeer = randomHex(32)
                 val newSign = buildDeviceSign(newId)
-                prefs.edit()
-                    .putString(KEY_ID, newId)
-                    .putString(KEY_PEER, newPeer)
-                    .putString(KEY_SIGN, newSign)
-                    .apply()
+                store.putString(KEY_ID, newId)
+                store.putString(KEY_PEER, newPeer)
+                store.putString(KEY_SIGN, newSign)
                 deviceId = newId
                 peerId = newPeer
                 deviceSign = newSign
