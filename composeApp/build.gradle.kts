@@ -35,6 +35,13 @@ kotlin {
     jvm()
 
     sourceSets {
+        // JVM 系共享中间层：协议层 / 下载引擎等可用 java.* 与 OkHttp 的代码放这里
+        // （Agent.md §10.2 判定规则：纯 Kotlin 进 commonMain，需 java.*/okhttp 进 jvmShared）
+        val commonMain by getting
+        val jvmShared by creating {
+            dependsOn(commonMain)
+        }
+
         val androidMain by getting {
             dependencies {
                 implementation("androidx.compose.material:material-icons-extended")
@@ -77,6 +84,24 @@ kotlin {
                 implementation(libs.junit)
             }
         }
+
+        // 共享测试层：commonTest 供纯 Kotlin 测试；jvmSharedTest 为 JVM 系共享测试（沿用 junit4）
+        val commonTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+            }
+        }
+        val jvmSharedTest by creating {
+            dependsOn(commonTest)
+            dependencies {
+                implementation(libs.junit)
+            }
+        }
+        // 接线：jvmShared 同时供 Android 与桌面编译（须在全部 by getting 声明之后）
+        androidMain.dependsOn(jvmShared)
+        jvmMain.dependsOn(jvmShared)
+        androidUnitTest.dependsOn(jvmSharedTest)
+        jvmTest.dependsOn(jvmSharedTest)
     }
 }
 
