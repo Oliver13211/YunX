@@ -23,6 +23,8 @@ kotlin {
                 implementation(compose.foundation)
                 implementation(compose.material3)
                 implementation(compose.ui)
+                // 桌面窗口/输入/渲染后端（skiko），Window/application 所需
+                implementation(compose.desktop.currentOs)
             }
         }
         val jvmTest by getting {
@@ -32,5 +34,12 @@ kotlin {
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
             }
         }
+    }
+}
+
+// 桌面应用配置：声明主类后插件才会注册 :desktop:run 任务（jpackage 打包配置在 Phase 5 追加）
+compose.desktop {
+    application {
+        mainClass = "com.yunx.desktop.MainKt"
     }
 }
