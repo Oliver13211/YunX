@@ -70,6 +70,12 @@ import kotlinx.coroutines.launch
  * 登录态存 Room（与 Android 同构的 SecureAccountDaos 加密 DAO），Phase 4 起接入 KCEF 网页登录。
  */
 
+/** 各平台分享根目录 fid（对齐 Android ResolveViewModel.currentDefaultDirFid）。 */
+private fun rootDirFid(platform: SharePlatform): String = when (platform) {
+    SharePlatform.BAIDU -> ""
+    else -> "0" // QuarkConstants.DEFAULT_PDIR_FID / UC / XUNLEI / C139 / PAN123 均为 "0"
+}
+
 private fun formatSize(bytes: Long): String = when {
     bytes >= 1L shl 30 -> "%.2f GB".format(bytes.toDouble() / (1L shl 30))
     bytes >= 1L shl 20 -> "%.2f MB".format(bytes.toDouble() / (1L shl 20))
@@ -197,16 +203,17 @@ private fun DesktopApp() {
                     directLink = ""
                     scope.launch {
                         val result = runCatching {
-                            repo.createSession(parsed.shareId, parsed.pwd, useCookie).getOrThrow()
+                            repo.createSession(shareText, parsed.pwd, useCookie).getOrThrow()
                         }
                         result.onSuccess { s ->
                             session = s
                             sessionRepo = repo
                             sessionCookie = useCookie
-                            repo.listFiles(s, "0", useCookie)
+                            repo.listFiles(s, rootDirFid(parsed.platform), useCookie)
                                 .onSuccess { message = "「${s.title}」共 ${it.size} 项（根目录）"; files = it }
                                 .onFailure { message = "列取文件失败：${it.message}" }
                         }.onFailure {
+                            it.printStackTrace()
                             message = "解析失败：${it.message}"
                         }
                         resolving = false
