@@ -131,7 +131,7 @@ private val yunxTrayIcon = object : Painter() {
     }
 }
 
-fun main() {
+fun main(args: Array<String>) {
     // KCEF 首次下载 JCEF 运行时走 Java Http 层：设置 YUNX_PROXY=host:port 即走代理
     System.getenv("YUNX_PROXY")?.takeIf { it.contains(':') }?.let { proxy ->
         val host = proxy.substringBefore(':')
@@ -140,6 +140,12 @@ fun main() {
         System.setProperty("https.proxyPort", port)
         System.setProperty("http.proxyHost", host)
         System.setProperty("http.proxyPort", port)
+    }
+    // 无头自检：YUNX_PROXY=... gradle :desktop:run --args="--kcef-smoke"
+    if ("--kcef-smoke" in args) {
+        val result = kotlinx.coroutines.runBlocking { kcefSmoke() }
+        println("KCEF_SMOKE_RESULT: $result")
+        kotlin.system.exitProcess(if (result.startsWith("OK")) 0 else 1)
     }
     application {
         val trayText = remember { mutableStateOf("YunX Desktop") }
@@ -166,6 +172,24 @@ fun main() {
             }
         }
     }
+}
+
+/** KCEF 无头自检：初始化 → 建浏览器 → 执行 JS，验证运行时加载与 JS 通路。 */
+internal suspend fun kcefSmoke(): String = try {
+    ensureKcef { phase, pct -> println("KCEF_SMOKE_PHASE: $phase ${pct?.let { "%.0f%%".format(it * 100) } ?: ""}") }
+    val client = dev.datlag.kcef.KCEF.newClient()
+    val browser = client.createBrowser("about:blank")
+    var eval: String? = null
+    repeat(10) {
+        if (eval.isNullOrBlank()) {
+            Thread.sleep(800)
+            eval = runCatching { browser.evaluateJavaScript("21*2") }.getOrNull()
+        }
+    }
+    browser.dispose()
+    if (eval == "42") "OK: JS 通路正常（21*2=42）" else "FAIL: JS 返回异常：$eval"
+} catch (e: Throwable) {
+    "FAIL: ${e.message}"
 }
 
 @Composable

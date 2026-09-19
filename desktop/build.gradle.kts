@@ -29,7 +29,8 @@ kotlin {
                 // 桌面窗口/输入/渲染后端（skiko），Window/application 所需
                 implementation(compose.desktop.currentOs)
                 // KCEF：内嵌 Chromium 网页登录（JCEF 运行时首启从 GitHub 下载，受限网络设 YUNX_PROXY）
-                implementation("dev.datlag:kcef:2025.03.23")
+                // 2025.03.23 在 macOS 换用 cef_server 新布局且框架路径解析不匹配（dlopen 失败 SIGSEGV），回退经典布局
+                implementation("dev.datlag:kcef:2024.04.20.4")
             }
         }
         val jvmTest by getting {
@@ -43,6 +44,16 @@ kotlin {
 }
 
 // 桌面应用配置：声明主类后插件才会注册 :desktop:run 任务（jpackage 打包配置在 Phase 5 追加）
+// JCEF 在 JDK 16+ 必须开放这些内部包（CefBrowserWindowMac 访问 sun.awt.AWTAccessor）
+val jcefJvmArgs = listOf(
+    "--add-opens", "java.desktop/java.awt=ALL-UNNAMED",
+    "--add-opens", "java.desktop/sun.awt=ALL-UNNAMED",
+    "--add-opens", "java.desktop/java.awt.peer=ALL-UNNAMED"
+)
+
+tasks.withType<JavaExec>().configureEach { jvmArgs(jcefJvmArgs) }
+tasks.withType<Test>().configureEach { jvmArgs(jcefJvmArgs) }
+
 compose.desktop {
     application {
         mainClass = "com.yunx.desktop.MainKt"

@@ -63,11 +63,15 @@ private object KcefHolder {
 }
 
 /** 初始化（幂等）：已就绪直接复用；失败抛出由调用方展示。 */
-private suspend fun ensureKcef(onPhase: (String, Float?) -> Unit): KCEFClient {
+internal suspend fun ensureKcef(onPhase: (String, Float?) -> Unit): KCEFClient {
     KcefHolder.client?.let { return it }
     KCEF.init(
         builder = {
             installDir(kcefInstallDir)
+            // 钉 JBR 版本：默认取最新已是 cef_server 新布局，经典 JCEF 框架路径解析不匹配（dlopen SIGSEGV）
+            download {
+                github { release("jbr-release-17.0.11b1207.24") }
+            }
             progress(object : KCEFBuilder.InitProgress {
                 override fun locating() = onPhase("定位运行时", null)
                 override fun downloading(progress: Float) = onPhase("下载运行时", progress)
