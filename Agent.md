@@ -351,7 +351,7 @@ private const val STAGGER_CAP = 8; STAGGER_MS = 25L  // 错峰建连，平摊 TC
 | 项 | 结论 |
 |---|---|
 | 产品名 | **YunX Desktop** |
-| 登录 | KCEF 内嵌 WebView（"系统浏览器回贴 Cookie"仅为降级预案） |
+| 登录 | **混合方案**：默认系统浏览器三步登录（零下载）；「内嵌窗口登录」为可选组件（首次点击下载一次 JBR/JCEF 运行时，钉定 jbr-release-17.0.11b1207.24 经典布局） |
 | macOS 分发 | 未公证 dmg、不上架、不买签名证书；发布说明写明首启放行步骤 |
 | Linux | 仅保持源集与接缝可用，**不做**适配与打包 |
 | 仓库 | 在本 fork 的 `desktop` 分支实施，持续可合并上游 |

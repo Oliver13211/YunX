@@ -28,6 +28,11 @@ class DesktopSettings(private val store: KeyValueStore = defaultKeyValueStore())
         get() = (store.getLong(KEY_THREADS) ?: DEFAULT_THREADS.toLong()).toInt().coerceIn(1, 32)
         set(value) = store.putLong(KEY_THREADS, value.coerceIn(1, 32).toLong())
 
+    /** 内嵌登录组件（KCEF/JBR 运行时）是否已下载启用 */
+    var embeddedLoginEnabled: Boolean
+        get() = store.getLong(KEY_EMBEDDED_LOGIN) == 1L
+        set(value) = store.putLong(KEY_EMBEDDED_LOGIN, if (value) 1L else 0L)
+
     var speedLimit: Long
         get() = store.getLong(KEY_SPEED_LIMIT) ?: 0L
         set(value) = store.putLong(KEY_SPEED_LIMIT, value)
@@ -37,6 +42,7 @@ class DesktopSettings(private val store: KeyValueStore = defaultKeyValueStore())
         const val KEY_MAX_CONCURRENT = "download.maxConcurrent"
         const val KEY_THREADS = "download.threads"
         const val KEY_SPEED_LIMIT = "download.speedLimit"
+        const val KEY_EMBEDDED_LOGIN = "login.embeddedEnabled"
         const val DEFAULT_MAX_CONCURRENT = 3
         const val DEFAULT_THREADS = 32
     }

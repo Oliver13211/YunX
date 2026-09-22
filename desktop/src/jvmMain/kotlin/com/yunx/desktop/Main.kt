@@ -36,6 +36,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CloudDownload
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.Link
@@ -132,7 +133,8 @@ private val yunxTrayIcon = object : Painter() {
 }
 
 fun main(args: Array<String>) {
-    // KCEF 首次下载 JCEF 运行时走 Java Http 层：设置 YUNX_PROXY=host:port 即走代理
+    // 内嵌登录组件（KCEF）首次下载走 Java Http 层：设置 YUNX_PROXY=host:port 可走代理
+    // （运行时源为 JetBrains 官方 CDN，一般无需代理）
     System.getenv("YUNX_PROXY")?.takeIf { it.contains(':') }?.let { proxy ->
         val host = proxy.substringBefore(':')
         val port = proxy.substringAfter(':')
@@ -141,7 +143,7 @@ fun main(args: Array<String>) {
         System.setProperty("http.proxyHost", host)
         System.setProperty("http.proxyPort", port)
     }
-    // 无头自检：YUNX_PROXY=... gradle :desktop:run --args="--kcef-smoke"
+    // 无头自检：gradle :desktop:run --args="--kcef-smoke"
     if ("--kcef-smoke" in args) {
         val result = kotlinx.coroutines.runBlocking { kcefSmoke() }
         println("KCEF_SMOKE_RESULT: $result")
@@ -216,6 +218,9 @@ private fun DesktopApp(trayText: MutableState<String>) {
     val quarkApi = remember { QuarkApi() }
     val pan123Api = remember { Pan123Api() }
     val clipboard = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
+    var embeddedReady by remember { mutableStateOf(settings.embeddedLoginEnabled) }
+    var embeddedPhase by remember { mutableStateOf<String?>(null) }
 
     var quarkCookie by remember { mutableStateOf("") }
     var quarkStatus by remember { mutableStateOf("未登录") }
@@ -231,6 +236,36 @@ private fun DesktopApp(trayText: MutableState<String>) {
         }
     }
 
+    // 剪贴板自动捕获（登录页控制台脚本 copy(...) 之后回到应用即自动识别入库）
+    var lastAutoCaptured by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(1500)
+            val text = clipboard.getText()?.toString()?.trim() ?: continue
+            if (text == lastAutoCaptured) continue
+            when {
+                text.contains("__puus") && text != quarkCookie.trim() -> {
+                    lastAutoCaptured = text
+                    quarkCookie = text
+                    scope.launch {
+                        runCatching { quarkDao.upsert(QuarkAccountEntity(cookie = text)) }
+                            .onSuccess { quarkStatus = "已自动捕获剪贴板 Cookie 并加密保存" }
+                            .onFailure { quarkStatus = "保存失败：${it.message}" }
+                    }
+                }
+                text.startsWith("eyJ") && text.contains(".") && text.length > 80 && text != panToken.trim() -> {
+                    lastAutoCaptured = text
+                    panToken = text
+                    scope.launch {
+                        runCatching { pan123Dao.upsert(Pan123AccountEntity(accessToken = text)) }
+                            .onSuccess { panStatus = "已自动捕获剪贴板 Token 并加密保存" }
+                            .onFailure { panStatus = "保存失败：${it.message}" }
+                    }
+                }
+            }
+        }
+    }
+
     var shareText by remember { mutableStateOf("") }
     var resolving by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("粘贴分享链接开始解析（当前支持夸克 / 123 云盘）") }
@@ -242,7 +277,6 @@ private fun DesktopApp(trayText: MutableState<String>) {
     var currentDirFid by remember { mutableStateOf("0") }
     val dirStack = remember { mutableStateListOf<Pair<String, String>>() } // fid to 名称
     var directLink by remember { mutableStateOf("") }
-    val scope = rememberCoroutineScope()
     var kcefLoginFor by remember { mutableStateOf<SharePlatform?>(null) }
 
     val allTasks by db.downloadTaskDao().observeAll().collectAsState(initial = emptyList())
@@ -288,9 +322,31 @@ private fun DesktopApp(trayText: MutableState<String>) {
                 LoginRow(
                     label = "夸克网盘",
                     status = quarkStatus,
+                    embeddedReady = embeddedReady,
+                    embeddedPhase = embeddedPhase,
+                    onEnableEmbedded = {
+                        if (embeddedPhase == null) {
+                            embeddedPhase = "准备下载"
+                            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                runCatching {
+                                    ensureKcef { phase, pct ->
+                                        embeddedPhase = if (pct != null) "$phase %.0f%%".format(pct * 100) else phase
+                                    }
+                                }.onSuccess {
+                                    settings.embeddedLoginEnabled = true
+                                    embeddedReady = true
+                                    embeddedPhase = null
+                                }.onFailure {
+                                    embeddedPhase = null
+                                    quarkStatus = "组件下载失败：${it.message}"
+                                }
+                            }
+                        }
+                    },
                     onEmbeddedLogin = { kcefLoginFor = SharePlatform.QUARK },
                     loginUrl = QuarkConstants.LOGIN_URL,
-                    hint = "网页登录后：F12 → 网络 → 任一请求 → 复制整段 Cookie 粘贴到此处",
+                    captureScript = """copy(document.cookie);'云析：Cookie 已复制，回到应用自动保存'""",
+                    hint = "也可手动粘贴整段 Cookie",
                     value = quarkCookie,
                     onValueChange = { quarkCookie = it },
                     onSave = {
@@ -307,9 +363,31 @@ private fun DesktopApp(trayText: MutableState<String>) {
                 LoginRow(
                     label = "123 云盘",
                     status = panStatus,
+                    embeddedReady = embeddedReady,
+                    embeddedPhase = embeddedPhase,
+                    onEnableEmbedded = {
+                        if (embeddedPhase == null) {
+                            embeddedPhase = "准备下载"
+                            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                runCatching {
+                                    ensureKcef { phase, pct ->
+                                        embeddedPhase = if (pct != null) "$phase %.0f%%".format(pct * 100) else phase
+                                    }
+                                }.onSuccess {
+                                    settings.embeddedLoginEnabled = true
+                                    embeddedReady = true
+                                    embeddedPhase = null
+                                }.onFailure {
+                                    embeddedPhase = null
+                                    panStatus = "组件下载失败：${it.message}"
+                                }
+                            }
+                        }
+                    },
                     onEmbeddedLogin = { kcefLoginFor = SharePlatform.PAN123 },
                     loginUrl = "https://yun.123pan.com/",
-                    hint = "网页登录后：F12 → 应用/网络中复制 authorToken（JWT）粘贴到此处",
+                    captureScript = """copy(localStorage.getItem('authorToken')||'');'云析：Token 已复制，回到应用自动保存'""",
+                    hint = "也可手动粘贴 authorToken（JWT）",
                     value = panToken,
                     onValueChange = { panToken = it },
                     onSave = {
@@ -500,7 +578,7 @@ private fun DesktopApp(trayText: MutableState<String>) {
         }
     }
 
-    // KCEF 内嵌登录窗（Phase 4 选定方案）
+    // KCEF 内嵌登录窗（可选组件：下载启用后可用）
     kcefLoginFor?.let { platform ->
         KcefLoginWindow(
             platform = platform,
@@ -535,13 +613,18 @@ private fun DesktopApp(trayText: MutableState<String>) {
 private fun LoginRow(
     label: String,
     status: String,
+    embeddedReady: Boolean,
+    embeddedPhase: String?,
+    onEnableEmbedded: () -> Unit,
     onEmbeddedLogin: () -> Unit,
     loginUrl: String,
+    captureScript: String,
     hint: String,
     value: String,
     onValueChange: (String) -> Unit,
     onSave: () -> Unit
 ) {
+    val clipboard = LocalClipboardManager.current
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
@@ -550,18 +633,46 @@ private fun LoginRow(
                 Spacer(Modifier.width(4.dp))
                 Text("打开登录页")
             }
+            TextButton(onClick = {
+                clipboard.setText(AnnotatedString(captureScript))
+                openBrowser(loginUrl)
+            }) {
+                Icon(Icons.Outlined.ContentCopy, contentDescription = null, Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("复制抓取脚本")
+            }
             Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        OutlinedTextField(
-            value = value,
-            onValueChange = onValueChange,
-            modifier = Modifier.fillMaxWidth(),
-            placeholder = { Text(hint, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            singleLine = true
+        Text(
+            "三步：① 在打开的网页完成登录 ② F12 打开控制台，粘贴刚复制的脚本并回车 ③ 回到本应用，自动识别保存",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = onSave) { Text("保存粘贴的凭证") }
-            TextButton(onClick = onEmbeddedLogin) { Text("内嵌窗口登录（推荐）") }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = value,
+                onValueChange = onValueChange,
+                modifier = Modifier.weight(1f),
+                placeholder = { Text(hint, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                singleLine = true
+            )
+            TextButton(onClick = onSave) { Text("手动保存") }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            when {
+                embeddedReady -> TextButton(onClick = onEmbeddedLogin) { Text("内嵌窗口登录") }
+                embeddedPhase != null -> {
+                    CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                    Text(
+                        "登录组件：$embeddedPhase",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                else -> TextButton(onClick = onEnableEmbedded) {
+                    Text("下载内嵌登录组件（一次性）")
+                }
+            }
         }
     }
 }
