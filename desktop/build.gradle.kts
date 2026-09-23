@@ -43,19 +43,29 @@ kotlin {
     }
 }
 
-// 桌面应用配置：声明主类后插件才会注册 :desktop:run 任务（jpackage 打包配置在 Phase 5 追加）
-// JCEF 在 JDK 16+ 必须开放这些内部包（CefBrowserWindowMac 访问 sun.awt.AWTAccessor）
+// JCEF 在 JDK 16+ 必须开放这些内部包（CefBrowserWindowMac 访问 sun.awt.AWTAccessor 等；
+// JetBrains Runtime 出厂即开放这些包，普通 JDK 需手动对齐同一组）。
+// 注意：运行参数必须走 compose.desktop.application.jvmArgs DSL——对 JavaExec 任务用
+// withType 追加 jvmArgs 会被 Compose 插件的 setter（注入 -Dcompose.application.* 整组
+// 参数时整体替换）覆盖，追加从未生效（jvmTest 不受影响，保留 withType<Test>）。
 val jcefJvmArgs = listOf(
     "--add-opens", "java.desktop/java.awt=ALL-UNNAMED",
+    "--add-opens", "java.desktop/java.awt.peer=ALL-UNNAMED",
     "--add-opens", "java.desktop/sun.awt=ALL-UNNAMED",
-    "--add-opens", "java.desktop/java.awt.peer=ALL-UNNAMED"
+    "--add-opens", "java.desktop/sun.awt.datatransfer=ALL-UNNAMED",
+    "--add-opens", "java.desktop/sun.awt.event=ALL-UNNAMED",
+    "--add-opens", "java.desktop/sun.awt.image=ALL-UNNAMED",
+    "--add-opens", "java.desktop/sun.awt.util=ALL-UNNAMED",
+    "--add-opens", "java.desktop/sun.lwawt=ALL-UNNAMED",
+    "--add-opens", "java.desktop/sun.lwawt.macosx=ALL-UNNAMED"
 )
 
-tasks.withType<JavaExec>().configureEach { jvmArgs(jcefJvmArgs) }
 tasks.withType<Test>().configureEach { jvmArgs(jcefJvmArgs) }
 
+// 桌面应用配置：声明主类后插件才会注册 :desktop:run 任务（jpackage 打包配置在 Phase 5 追加）
 compose.desktop {
     application {
         mainClass = "com.yunx.desktop.MainKt"
+        jvmArgs(*jcefJvmArgs.toTypedArray())
     }
 }

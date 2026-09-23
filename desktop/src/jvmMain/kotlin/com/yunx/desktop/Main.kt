@@ -176,22 +176,38 @@ fun main(args: Array<String>) {
     }
 }
 
-/** KCEF 无头自检：初始化 → 建浏览器 → 执行 JS，验证运行时加载与 JS 通路。 */
-internal suspend fun kcefSmoke(): String = try {
-    ensureKcef { phase, pct -> println("KCEF_SMOKE_PHASE: $phase ${pct?.let { "%.0f%%".format(it * 100) } ?: ""}") }
-    val client = dev.datlag.kcef.KCEF.newClient()
-    val browser = client.createBrowser("about:blank")
-    var eval: String? = null
-    repeat(10) {
-        if (eval.isNullOrBlank()) {
-            Thread.sleep(800)
-            eval = runCatching { browser.evaluateJavaScript("21*2") }.getOrNull()
+/** KCEF 自检：初始化 → 建浏览器 → 挂进可见窗口 → 执行 JS，验证完整通路。 */
+internal suspend fun kcefSmoke(): String {
+    val frame = java.awt.Frame("KCEF 自检")
+    var browser: dev.datlag.kcef.KCEFBrowser? = null
+    return try {
+        ensureKcef { phase, pct -> println("KCEF_SMOKE_PHASE: $phase ${pct?.let { "%.0f%%".format(it * 100) } ?: ""}") }
+        val client = dev.datlag.kcef.KCEF.newClient()
+        val b = client.createBrowser("about:blank")
+        browser = b
+        // 窗口模式的原生浏览器（CefBrowserWindowMac，原崩溃点）要等组件挂进可见窗口、
+        // peer 创建后才真正建立；不显示窗口则 JS 回调永远不会到来（进程挂起不退出）
+        java.awt.EventQueue.invokeAndWait {
+            frame.add(b.uiComponent, java.awt.BorderLayout.CENTER)
+            frame.setSize(800, 600)
+            frame.isVisible = true
         }
+        var eval: String? = null
+        repeat(15) {
+            if (eval.isNullOrBlank()) {
+                Thread.sleep(1000)
+                eval = kotlinx.coroutines.withTimeoutOrNull(5000) {
+                    runCatching { b.evaluateJavaScript("21*2") }.getOrNull()
+                }
+            }
+        }
+        if (eval == "42") "OK: JS 通路正常（21*2=42）" else "FAIL: JS 返回异常：$eval"
+    } catch (e: Throwable) {
+        "FAIL: ${e.message}"
+    } finally {
+        runCatching { browser?.dispose() }
+        runCatching { java.awt.EventQueue.invokeAndWait { frame.dispose() } }
     }
-    browser.dispose()
-    if (eval == "42") "OK: JS 通路正常（21*2=42）" else "FAIL: JS 返回异常：$eval"
-} catch (e: Throwable) {
-    "FAIL: ${e.message}"
 }
 
 @Composable
