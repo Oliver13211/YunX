@@ -260,7 +260,7 @@ private fun DesktopApp(trayText: MutableState<String>) {
             val text = clipboard.getText()?.toString()?.trim() ?: continue
             if (text == lastAutoCaptured) continue
             when {
-                text.contains("__puus") && text != quarkCookie.trim() -> {
+                text.contains("__pus=") && text.contains("__puus=") && text != quarkCookie.trim() -> {
                     lastAutoCaptured = text
                     quarkCookie = text
                     scope.launch {
@@ -368,6 +368,7 @@ private fun DesktopApp(trayText: MutableState<String>) {
                     onSave = {
                         val cookie = quarkCookie.trim()
                         if (cookie.isEmpty()) { quarkStatus = "Cookie 为空"; return@LoginRow }
+                        if (!QuarkConstants.isValidCookie(cookie)) { quarkStatus = "未检测到登录态（缺少 __pus/__puus）"; return@LoginRow }
                         scope.launch {
                             runCatching { quarkDao.upsert(QuarkAccountEntity(cookie = cookie)) }
                                 .onSuccess { quarkStatus = "已保存（AES-GCM 加密）" }
@@ -600,25 +601,31 @@ private fun DesktopApp(trayText: MutableState<String>) {
             platform = platform,
             onClose = { kcefLoginFor = null },
             onCaptured = { credential ->
-                when (platform) {
-                    SharePlatform.PAN123 -> {
-                        panToken = credential
-                        scope.launch {
-                            runCatching { pan123Dao.upsert(Pan123AccountEntity(accessToken = credential)) }
-                                .onSuccess { panStatus = "已保存（AES-GCM 加密）" }
-                                .onFailure { panStatus = "保存失败：${it.message}" }
-                        }
-                    }
-                    else -> {
-                        quarkCookie = credential
-                        scope.launch {
-                            runCatching { quarkDao.upsert(QuarkAccountEntity(cookie = credential)) }
-                                .onSuccess { quarkStatus = "已保存（AES-GCM 加密）" }
-                                .onFailure { quarkStatus = "保存失败：${it.message}" }
-                        }
+                // 校验门槛与昵称落库对齐 Android QuarkAccountRepository.saveQuarkAccount
+                scope.launch {
+                    when (platform) {
+                        SharePlatform.PAN123 -> runCatching {
+                            val token = credential.trim()
+                            val nickname = pan123Api.fetchNickname(token)
+                                ?: throw IllegalStateException("Token 校验失败（user/info 不通过），请重新登录")
+                            pan123Dao.upsert(Pan123AccountEntity(accessToken = token, nickname = nickname))
+                            panToken = token
+                            panStatus = "已保存（AES-GCM 加密）· ${nickname}"
+                            kcefLoginFor = null
+                        }.onFailure { panStatus = "保存失败：${it.message}" }
+                        else -> runCatching {
+                            val cookie = credential.trim()
+                            if (!QuarkConstants.isValidCookie(cookie)) {
+                                throw IllegalStateException("未检测到登录态（缺少 __pus/__puus），请重新登录")
+                            }
+                            val nickname = quarkApi.fetchNickname(cookie) ?: "夸克用户"
+                            quarkDao.upsert(QuarkAccountEntity(cookie = cookie, nickname = nickname))
+                            quarkCookie = cookie
+                            quarkStatus = "已保存（AES-GCM 加密）· ${nickname}"
+                            kcefLoginFor = null
+                        }.onFailure { quarkStatus = "保存失败：${it.message}" }
                     }
                 }
-                kcefLoginFor = null
             }
         )
     }
