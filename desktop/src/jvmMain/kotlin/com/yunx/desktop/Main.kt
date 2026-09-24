@@ -42,6 +42,7 @@ import androidx.compose.material.icons.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -295,6 +296,35 @@ private fun DesktopApp(trayText: MutableState<String>) {
     var directLink by remember { mutableStateOf("") }
     var kcefLoginFor by remember { mutableStateOf<SharePlatform?>(null) }
 
+    // ---------- 我的网盘视图状态 ----------
+    var mainTab by remember { mutableStateOf(0) } // 0=分享解析 1=我的夸克网盘
+    var cloudFiles by remember { mutableStateOf<List<ShareFile>>(emptyList()) }
+    var cloudDirStack = remember { mutableStateListOf<Pair<String, String>>() } // fid to 名称
+    var cloudLoading by remember { mutableStateOf(false) }
+    var cloudMessage by remember { mutableStateOf("登录夸克后可浏览自己的网盘文件") }
+
+    /** 加载个人盘指定目录（根目录 fid="0"）；返回 null 视为 Cookie 失效。 */
+    fun loadCloudDir(fid: String) {
+        if (quarkCookie.isBlank()) { cloudMessage = "请先登录夸克"; return }
+        cloudLoading = true
+        scope.launch {
+            runCatching { quarkApi.listCloudFiles(fid, quarkCookie.trim()) }
+                .onSuccess { list ->
+                    if (list == null) {
+                        cloudMessage = "列取失败：Cookie 可能已失效，请重新登录"
+                    } else {
+                        cloudFiles = list
+                        cloudMessage = "当前目录 ${list.size} 项"
+                    }
+                }
+                .onFailure {
+                    it.printStackTrace()
+                    cloudMessage = "列取失败：${it.message}"
+                }
+            cloudLoading = false
+        }
+    }
+
     val allTasks by db.downloadTaskDao().observeAll().collectAsState(initial = emptyList())
     LaunchedEffect(allTasks) {
         val active = allTasks.count { it.status == DownloadTaskEntity.STATUS_DOWNLOADING }
@@ -420,6 +450,24 @@ private fun DesktopApp(trayText: MutableState<String>) {
             }
         }
 
+        // ---------- 视图切换 ----------
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = mainTab == 0,
+                onClick = { mainTab = 0 },
+                label = { Text("分享解析") }
+            )
+            FilterChip(
+                selected = mainTab == 1,
+                onClick = {
+                    mainTab = 1
+                    if (cloudFiles.isEmpty() && quarkCookie.isNotBlank()) loadCloudDir("0")
+                },
+                label = { Text("我的夸克网盘") }
+            )
+        }
+
+        if (mainTab == 0) {
         // ---------- 解析卡 ----------
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -582,6 +630,96 @@ private fun DesktopApp(trayText: MutableState<String>) {
                         Spacer(Modifier.height(6.dp))
                         Text("直链：$directLink", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         TextButton(onClick = { directLink = "" }) { Text("关闭直链显示") }
+                    }
+                }
+            }
+        }
+
+        }
+
+        // ---------- 我的网盘视图 ----------
+        if (mainTab == 1) {
+            Card(Modifier.fillMaxWidth().weight(1f), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Column(Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("④ 我的夸克网盘", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            cloudDirStack.joinToString(" / ") { it.second }.ifBlank { "根目录" },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (cloudDirStack.isNotEmpty()) {
+                            OutlinedButton(onClick = {
+                                val popped = cloudDirStack.removeAt(cloudDirStack.lastIndex)
+                                loadCloudDir(popped.first)
+                            }) {
+                                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = null, Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("上级")
+                            }
+                        }
+                        OutlinedButton(
+                            enabled = quarkCookie.isNotBlank() && !cloudLoading,
+                            onClick = { loadCloudDir(cloudDirStack.lastOrNull()?.first ?: "0") }
+                        ) { Text("刷新") }
+                    }
+                    if (quarkCookie.isBlank()) {
+                        Text("请先在 ① 登录夸克（Cookie 是个人盘接口的唯一凭证）", style = MaterialTheme.typography.bodySmall)
+                    } else {
+                        Text(cloudMessage, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(8.dp))
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.weight(1f)) {
+                            items(cloudFiles) { file ->
+                                FileRow(
+                                    file = file,
+                                    resolving = cloudLoading,
+                                    onEnterDir = {
+                                        cloudDirStack.add(file.fid to file.fname)
+                                        loadCloudDir(file.fid)
+                                    },
+                                    onGetLink = {
+                                        cloudLoading = true
+                                        scope.launch {
+                                            runCatching { quarkApi.getDownloadLink(file.fid, quarkCookie.trim()) }
+                                                .onSuccess { link ->
+                                                    if (link != null) {
+                                                        clipboard.setText(AnnotatedString(link.downloadUrl))
+                                                        cloudMessage = "直链已复制到剪贴板"
+                                                    } else cloudMessage = "未取到直链"
+                                                }
+                                                .onFailure { cloudMessage = "取直链失败：${it.message}" }
+                                            cloudLoading = false
+                                        }
+                                    },
+                                    onDownload = {
+                                        cloudLoading = true
+                                        scope.launch {
+                                            runCatching {
+                                                val link = quarkApi.getDownloadLink(file.fid, quarkCookie.trim())
+                                                    ?: throw IllegalStateException("未取到直链")
+                                                // 个人盘直链请求头：与分享下载一致（Cookie+UA+Referer 防盗链）
+                                                downloadManager.enqueue(
+                                                    link.downloadUrl,
+                                                    link.filename,
+                                                    mapOf(
+                                                        "Cookie" to quarkCookie.trim(),
+                                                        "User-Agent" to QuarkConstants.API_USER_AGENT,
+                                                        "Referer" to QuarkConstants.DOWNLOAD_REFERER
+                                                    ),
+                                                    link.size,
+                                                    DownloadPlatform.QUARK
+                                                )
+                                            }.onSuccess { cloudMessage = "已加入下载任务" }
+                                                .onFailure { cloudMessage = "加入下载失败：${it.message}" }
+                                            cloudLoading = false
+                                        }
+                                    }
+                                )
+                            }
+                        }
                     }
                 }
             }
