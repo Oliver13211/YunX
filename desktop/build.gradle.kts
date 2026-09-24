@@ -28,6 +28,9 @@ kotlin {
                 implementation(compose.ui)
                 // 桌面窗口/输入/渲染后端（skiko），Window/application 所需
                 implementation(compose.desktop.currentOs)
+                // 提供 Dispatchers.Main（= Swing EDT），KCEF 抓取回 UI 必需；
+                // 版本必须与 coroutines-core 一致，否则 ServiceLoader 注册不生效
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.10.2")
                 // KCEF：内嵌 Chromium 网页登录（JCEF 运行时首启从 GitHub 下载，受限网络设 YUNX_PROXY）
                 // 2025.03.23 在 macOS 换用 cef_server 新布局且框架路径解析不匹配（dlopen 失败 SIGSEGV），回退经典布局
                 implementation("dev.datlag:kcef:2024.04.20.4")
