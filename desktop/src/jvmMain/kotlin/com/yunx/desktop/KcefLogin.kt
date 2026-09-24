@@ -68,6 +68,11 @@ internal suspend fun ensureKcef(onPhase: (String, Float?) -> Unit): KCEFClient {
     KCEF.init(
         builder = {
             installDir(kcefInstallDir)
+            settings {
+                // Chromium profile（缓存/Cookie 媒体盐等）收敛到 ~/.yunx，避免污染工作目录
+                val profileDir = java.io.File(kcefInstallDir.parentFile, "kcef-profile").apply { mkdirs() }
+                cachePath = profileDir.absolutePath
+            }
             // 钉 JBR 版本：默认取最新已是 cef_server 新布局，经典 JCEF 框架路径解析不匹配（dlopen SIGSEGV）
             download {
                 github { release("jbr-release-17.0.11b1207.24") }

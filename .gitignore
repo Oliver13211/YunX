@@ -19,3 +19,5 @@ gradle-app.setting
 !gradle-wrapper.jar
 local.properties
 
+# KCEF/Chromium 在工作目录可能产生的 profile 残留
+MediaDeviceSalts*
