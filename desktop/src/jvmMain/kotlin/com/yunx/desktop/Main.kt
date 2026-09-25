@@ -303,24 +303,32 @@ private fun DesktopApp(trayText: MutableState<String>) {
     var cloudLoading by remember { mutableStateOf(false) }
     var cloudMessage by remember { mutableStateOf("登录夸克后可浏览自己的网盘文件") }
 
-    /** 加载个人盘指定目录（根目录 fid="0"）；返回 null 视为 Cookie 失效。 */
+    /** 加载个人盘指定目录（根目录 fid="0"）。Cookie 以 DB 为唯一事实源
+     *  （对齐原版 Repository 层语义），不依赖 UI 状态变量；listCloudFiles
+     *  返回 null 视为 Cookie 失效。 */
     fun loadCloudDir(fid: String) {
-        if (quarkCookie.isBlank()) { cloudMessage = "请先登录夸克"; return }
         cloudLoading = true
         scope.launch {
-            runCatching { quarkApi.listCloudFiles(fid, quarkCookie.trim()) }
-                .onSuccess { list ->
-                    if (list == null) {
-                        cloudMessage = "列取失败：Cookie 可能已失效，请重新登录"
-                    } else {
-                        cloudFiles = list
-                        cloudMessage = "当前目录 ${list.size} 项"
+            val cookie = runCatching { quarkDao.getAccount()?.cookie.orEmpty().trim() }
+                .getOrDefault("")
+            if (cookie.isBlank()) {
+                cloudMessage = "未检测到登录凭证，请先在 ① 登录夸克"
+            } else {
+                quarkCookie = cookie // 回填到输入框，便于用户查看/手动复制
+                runCatching { quarkApi.listCloudFiles(fid, cookie) }
+                    .onSuccess { list ->
+                        if (list == null) {
+                            cloudMessage = "列取失败：Cookie 可能已失效，请重新登录"
+                        } else {
+                            cloudFiles = list
+                            cloudMessage = "当前目录 ${list.size} 项"
+                        }
                     }
-                }
-                .onFailure {
-                    it.printStackTrace()
-                    cloudMessage = "列取失败：${it.message}"
-                }
+                    .onFailure {
+                        it.printStackTrace()
+                        cloudMessage = "列取失败：${it.message}"
+                    }
+            }
             cloudLoading = false
         }
     }
@@ -461,7 +469,7 @@ private fun DesktopApp(trayText: MutableState<String>) {
                 selected = mainTab == 1,
                 onClick = {
                     mainTab = 1
-                    if (cloudFiles.isEmpty() && quarkCookie.isNotBlank()) loadCloudDir("0")
+                    if (cloudFiles.isEmpty()) loadCloudDir(cloudDirStack.lastOrNull()?.first ?: "0")
                 },
                 label = { Text("我的夸克网盘") }
             )
@@ -666,9 +674,7 @@ private fun DesktopApp(trayText: MutableState<String>) {
                             onClick = { loadCloudDir(cloudDirStack.lastOrNull()?.first ?: "0") }
                         ) { Text("刷新") }
                     }
-                    if (quarkCookie.isBlank()) {
-                        Text("请先在 ① 登录夸克（Cookie 是个人盘接口的唯一凭证）", style = MaterialTheme.typography.bodySmall)
-                    } else {
+                    run {
                         Text(cloudMessage, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(8.dp))
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.weight(1f)) {
