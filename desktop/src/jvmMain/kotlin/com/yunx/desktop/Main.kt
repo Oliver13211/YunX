@@ -35,11 +35,18 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
@@ -49,6 +56,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -140,6 +149,11 @@ internal fun formatSize(bytes: Long): String = when {
 internal fun rootDirFid(platform: SharePlatform): String = when (platform) {
     SharePlatform.BAIDU -> ""
     else -> "0"
+}
+
+/** 主界面左侧导航的 4 个选项卡（对齐原版 MainTab.kt；图标在 rail 处直接引用避免与常量名冲突）。 */
+private enum class MainTab(val title: String) {
+    Resolve("解析"), Drive("网盘"), Download("下载"), Settings("设置")
 }
 
 /** 程序化托盘图标（避免引入图片资源）：紫色圆点，对齐 Material 主色。 */
@@ -280,9 +294,11 @@ private fun DesktopApp(trayText: MutableState<String>) {
     var xlPass by remember { mutableStateOf("") }
     var xlSms by remember { mutableStateOf("") }
     var xlSmsCreditKey by remember { mutableStateOf("") }
+    var xlReviewUrl by remember { mutableStateOf("") }
     var xlSmsToken by remember { mutableStateOf("") }
     var xlStatus by remember { mutableStateOf("未登录") }
     var xlBusy by remember { mutableStateOf(false) }
+    var xlNeedSms by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         quarkDao.getAccount()?.let {
@@ -348,8 +364,8 @@ private fun DesktopApp(trayText: MutableState<String>) {
     var directLink by remember { mutableStateOf("") }
     var kcefLoginFor by remember { mutableStateOf<SharePlatform?>(null) }
 
-    // ---------- 我的网盘视图状态 ----------
-    var mainTab by remember { mutableStateOf(0) } // 0=分享解析 1=我的夸克网盘
+    // ---------- 界面导航（左侧 4 选项卡，对齐原版 MainTab） ----------
+    var tab by remember { mutableStateOf(0) }
     var cloudFiles by remember { mutableStateOf<List<ShareFile>>(emptyList()) }
     var cloudDirStack = remember { mutableStateListOf<Pair<String, String>>() } // fid to 名称
     var cloudLoading by remember { mutableStateOf(false) }
@@ -411,7 +427,35 @@ private fun DesktopApp(trayText: MutableState<String>) {
         }
     }
 
-    Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    // 网盘页进入时自动加载根目录
+    LaunchedEffect(tab) {
+        if (tab == 1 && cloudFiles.isEmpty()) loadCloudDir("0")
+    }
+
+    Row(Modifier.fillMaxSize()) {
+        NavigationRail {
+            NavigationRailItem(
+                selected = tab == 0, onClick = { tab = 0 },
+                icon = { Icon(if (tab == 0) Icons.Filled.Link else Icons.Outlined.Link, contentDescription = "解析") },
+                label = { Text("解析") }
+            )
+            NavigationRailItem(
+                selected = tab == 1, onClick = { tab = 1 },
+                icon = { Icon(if (tab == 1) Icons.Filled.Cloud else Icons.Outlined.Cloud, contentDescription = "网盘") },
+                label = { Text("网盘") }
+            )
+            NavigationRailItem(
+                selected = tab == 2, onClick = { tab = 2 },
+                icon = { Icon(if (tab == 2) Icons.Filled.Download else Icons.Outlined.Download, contentDescription = "下载") },
+                label = { Text("下载") }
+            )
+            NavigationRailItem(
+                selected = tab == 3, onClick = { tab = 3 },
+                icon = { Icon(if (tab == 3) Icons.Filled.Settings else Icons.Outlined.Settings, contentDescription = "设置") },
+                label = { Text("设置") }
+            )
+        }
+        Column(Modifier.weight(1f).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         // ---------- 标题 ----------
         Column {
             Text("YunX Desktop", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -421,6 +465,7 @@ private fun DesktopApp(trayText: MutableState<String>) {
             )
         }
 
+        if (tab == 1) {
         // ---------- 登录卡 ----------
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -669,27 +714,46 @@ private fun DesktopApp(trayText: MutableState<String>) {
                                     val step = xunleiRepo.loginWithPassword(xlUser.trim(), xlPass)
                                     when {
                                         step.needSms -> {
-                                            xlSmsCreditKey = step.smsCreditKey
-                                            xlSmsToken = step.smsToken
-                                            xlStatus = "触发风控：请点「发送验证码」完成短信验证"
+                                            // 对齐原版 XunleiAccountViewModel.login：
+                                            // 风控响应 reviewUrl 自带 creditkey 时直接进入短信输入；
+                                            // 否则保持待发送状态，由用户点「发送验证码」补 creditkey
+                                            val reviewMap = XunleiApi.parseReviewUrl(step.reviewUrl)
+                                            val creditKey = reviewMap["creditkey"].orEmpty()
+                                            if (creditKey.isNotBlank()) {
+                                                xlSmsCreditKey = creditKey
+                                                xlSmsToken = reviewMap["token"].orEmpty()
+                                            }
+                                            xlNeedSms = true
+                                            xlStatus = "触发安全验证：请点「发送验证码」获取短信"
+                                            if (step.reviewUrl.isNotBlank()) xlReviewUrl = step.reviewUrl
                                         }
-                                        xunleiRepo.finishLogin(step, xlUser.trim()) ->
+                                        step.sessionKey.isNotBlank() && step.sessionId.isNotBlank() &&
+                                            xunleiRepo.finishLogin(step, xlUser.trim()) ->
                                             xlStatus = "登录成功 · ${step.nickname.ifBlank { "迅雷用户" }}"
-                                        else -> xlStatus = step.message.ifBlank { "登录失败" }
+                                        else -> xlStatus = step.message.ifBlank { "登录失败，请检查账号密码" }
                                     }
                                 }.onFailure { xlStatus = "登录失败：${it.message}" }
                                 xlBusy = false
                             }
                         }) { Text(if (xlBusy) "登录中…" else "登录") }
-                        Button(enabled = !xlBusy && xlSmsCreditKey.isNotBlank(), onClick = {
+                        // 发送验证码不依赖已有 creditkey（它正是 sendSms 的返回物）
+                        Button(enabled = !xlBusy && xlNeedSms && xlUser.isNotBlank(), onClick = {
                             xlBusy = true
                             scope.launch {
-                                runCatching { xunleiRepo.sendSms(xlUser.trim()) }
-                                    .onSuccess { xlStatus = "验证码已发送，请查收短信" }
-                                    .onFailure { xlStatus = "发送失败：${it.message}" }
+                                runCatching {
+                                    val smsStep = xunleiRepo.sendSms(xlUser.trim())
+                                    if (smsStep.smsCreditKey.isNotBlank()) {
+                                        xlSmsCreditKey = smsStep.smsCreditKey
+                                        xlSmsToken = smsStep.smsToken
+                                        xlStatus = "验证码已发送，请查收短信"
+                                    } else xlStatus = smsStep.message.ifBlank { "短信发送失败，请重试或检查网络" }
+                                }.onFailure { xlStatus = "发送失败：${it.message}" }
                                 xlBusy = false
                             }
                         }) { Text("发送验证码") }
+                        if (xlReviewUrl.isNotBlank()) {
+                            TextButton(onClick = { openBrowser(xlReviewUrl) }) { Text("打开验证页") }
+                        }
                     }
                     if (xlSmsCreditKey.isNotBlank()) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -707,7 +771,9 @@ private fun DesktopApp(trayText: MutableState<String>) {
                                         if (xunleiRepo.loginWithSms(xlUser.trim(), xlSms.trim(), xlSmsCreditKey, xlSmsToken)) {
                                             xlStatus = "登录成功"
                                             xlSmsCreditKey = ""
-                                        } else xlStatus = "验证码登录失败"
+                                            xlNeedSms = false
+                                            xlReviewUrl = ""
+                                        } else xlStatus = "验证码校验失败"
                                     }.onFailure { xlStatus = "登录失败：${it.message}" }
                                     xlBusy = false
                                 }
@@ -717,25 +783,9 @@ private fun DesktopApp(trayText: MutableState<String>) {
                 }
             }
         }
-
-        // ---------- 视图切换 ----------
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(
-                selected = mainTab == 0,
-                onClick = { mainTab = 0 },
-                label = { Text("分享解析") }
-            )
-            FilterChip(
-                selected = mainTab == 1,
-                onClick = {
-                    mainTab = 1
-                    if (cloudFiles.isEmpty()) loadCloudDir(cloudDirStack.lastOrNull()?.first ?: "0")
-                },
-                label = { Text("我的夸克网盘") }
-            )
         }
 
-        if (mainTab == 0) {
+        if (tab == 0) {
         // ---------- 解析卡 ----------
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -939,7 +989,7 @@ private fun DesktopApp(trayText: MutableState<String>) {
         }
 
         // ---------- 我的网盘视图 ----------
-        if (mainTab == 1) {
+        if (tab == 1) {
             Card(Modifier.fillMaxWidth().weight(1f), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 Column(Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1025,10 +1075,17 @@ private fun DesktopApp(trayText: MutableState<String>) {
         }
 
         // ---------- 下载卡 ----------
-        Card(Modifier.fillMaxWidth().height(250.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-            Column(Modifier.padding(16.dp)) {
-                DownloadsSection(db, downloadManager, settings)
+        if (tab == 2) {
+            Card(Modifier.fillMaxWidth().weight(1f), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Column(Modifier.padding(16.dp)) {
+                    DownloadsSection(db, downloadManager, settings)
+                }
             }
+        }
+
+        // ---------- 设置卡 ----------
+        if (tab == 3) {
+            SettingsSection(settings)
         }
     }
 
@@ -1097,6 +1154,7 @@ private fun DesktopApp(trayText: MutableState<String>) {
     }
 }
 
+    }
 /** 登录行：平台名 + 打开登录页 + 凭证粘贴 + 保存。 */
 @Composable
 private fun LoginRow(

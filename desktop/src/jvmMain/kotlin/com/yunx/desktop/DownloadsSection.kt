@@ -65,20 +65,12 @@ fun DownloadsSection(db: AppDatabase, manager: DownloadManager, settings: Deskto
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("下载管理", style = MaterialTheme.typography.titleMedium)
             Text(
-                "保存目录：${settings.downloadDir.ifBlank { "~/Downloads（默认）" }}",
+                "保存目录：${settings.downloadDir.ifBlank { "~/Downloads（默认）" }}（更改目录见「设置」页）",
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.weight(1f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            OutlinedButton(onClick = {
-                // 模态目录选择器；CMP 暂无跨平台 Picker，用 Swing 标准件（EDT 上阻塞至选择完成）
-                val chooser = javax.swing.JFileChooser(settings.downloadDir.ifBlank { null })
-                    .apply { fileSelectionMode = javax.swing.JFileChooser.DIRECTORIES_ONLY; dialogTitle = "选择下载保存目录" }
-                if (chooser.showOpenDialog(null) == javax.swing.JFileChooser.APPROVE_OPTION) {
-                    settings.downloadDir = chooser.selectedFile.absolutePath
-                }
-            }) { Text("更改目录") }
         }
 
         if (tasks.isEmpty()) {
