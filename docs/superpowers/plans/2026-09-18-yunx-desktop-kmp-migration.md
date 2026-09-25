@@ -111,7 +111,10 @@ expect fun currentLogSink()  // android.util.Log / slf4j
 **交付判据**：断网续传、并发限速、大文件（>1GB）下载在 macOS 实测通过；`.part` 分片与任务恢复语义与 Android 版一致（同一套 `DownloadSaver` 单测覆盖）。
 **预估**：3–5 天。
 
-### Phase 4：登录与凭证（风险最高阶段）
+### Phase 4：登录与凭证（✅ 2026-09-25 完成，用户实测验收）
+> 实际交付混合方案：系统浏览器三步登录（默认）+ KCEF 内嵌（可选组件，钉定 JBR 17.0.11b1207.24）。
+> 六家网盘全量适配于收尾提交 eb07c74：迅雷纯 API 账号密码/短信登录；UC/百度/139 走 KCEF 抓取（按平台域过滤 + isValidCookie + 昵称验证）。
+> 未尽项：网盘浏览视图仅夸克；keyring 升级走软件密钥过渡；夸克 __puus 90 分钟保活未接桌面。
 **范围**：
 - **选定方案：KCEF 内嵌 WebView**（已决策）：`ui/login/*` 六个登录屏接入 `WebLoginHandle` 抽象，Cookie 拦截逻辑与 Android 版共用；
 - **降级预案（仅当 KCEF 集成受阻时启用）**：唤起系统浏览器完成网页登录，用户回贴 Cookie/授权串（alist 模式）；
