@@ -11,17 +11,20 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,16 +36,26 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import javax.swing.JFileChooser
 
+/** 平台线程设置行（key 与 DownloadPlatform 常量一致）。 */
+private val PLATFORM_LABELS = listOf(
+    "quark" to "夸克",
+    "uc" to "UC",
+    "xunlei" to "迅雷（固定 8）",
+    "baidu" to "百度",
+    "c139" to "139",
+    "pan123" to "123"
+)
+
 /**
- * 设置页（对齐原版 SettingsScreen 的桌面相关子集）：
- * 保存目录 / 最大同时下载任务数 / 单任务分片线程数 / 全局限速。
- * 经 DownloadManager 的 Provider 闭包注入，改即生效（Agent.md §3.5）。
+ * 设置页（对齐原版 SettingsScreen 的桌面子集）：
+ * 分片设置（按网盘线程数）/ 保存目录 / 并发 / 限速 / 失败重试 / 主题外观 / 关于。
+ * 全部经 Provider 闭包注入改即生效（Agent.md §3.5）。
  */
 @Composable
-fun SettingsSection(settings: DesktopSettings) {
-    var speedInput by remember { mutableStateOf(
-        if (settings.speedLimit > 0) "%.0f".format(settings.speedLimit / 1048576.0) else ""
-    ) }
+fun SettingsSection(settings: DesktopSettings, darkMode: MutableState<Int> = mutableStateOf(0)) {
+    var speedInput by remember {
+        mutableStateOf(if (settings.speedLimit > 0) "%.0f".format(settings.speedLimit / 1048576.0) else "")
+    }
 
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(
@@ -94,30 +107,6 @@ fun SettingsSection(settings: DesktopSettings) {
                 )
             }
 
-            // ---------- 单任务分片线程数 ----------
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("单任务分片线程数", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                    Text(
-                        "${settings.threadCount} 线程",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 8.dp)
-                    )
-                }
-                Slider(
-                    value = settings.threadCount.toFloat(),
-                    onValueChange = { settings.threadCount = it.toInt().coerceIn(1, 32) },
-                    valueRange = 1f..32f,
-                    steps = 30
-                )
-                Text(
-                    "迅雷分片并发受 CDN 限制固定上限 8（并发超过会被降级为整文件单流），设置更高仅对其他平台生效",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
             // ---------- 全局限速 ----------
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("全局限速（MB/s，留空表示不限速）", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
@@ -133,10 +122,115 @@ fun SettingsSection(settings: DesktopSettings) {
                         singleLine = true,
                         placeholder = { Text("不限") }
                     )
-                    Text("当前：${if (settings.speedLimit > 0) formatSize(settings.speedLimit) + "/s" else "不限速"}",
+                    Text(
+                        "当前：${if (settings.speedLimit > 0) formatSize(settings.speedLimit) + "/s" else "不限速"}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+
+            // ---------- 分片设置：按网盘线程数（对齐原版「下载线程数」按平台设置） ----------
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("分片设置（按网盘分别生效）", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "单任务分片并发数；实际分片数还会被文件大小与「单片最小 1MB」策略约束，小文件实际并发可能低于设定",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                PLATFORM_LABELS.forEach { (platform, label) ->
+                    val isXunlei = platform == "xunlei"
+                    val current = settings.threadsFor(platform)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.width(120.dp))
+                        Slider(
+                            value = current.toFloat(),
+                            onValueChange = { settings.setThreads(platform, it.toInt().coerceIn(1, 32)) },
+                            valueRange = 1f..32f,
+                            steps = 30,
+                            enabled = !isXunlei,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            "$current 线程",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Text(
+                    "迅雷并发超过 8 会被 CDN 降级为整文件单流（速度暴跌），故固定 8 不可修改；以上设置即时生效，无需重启",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            // ---------- 失败自动重试（对齐原版） ----------
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("失败自动重试", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    Text(
+                        "${settings.retryCount} 次",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 8.dp)
+                    )
+                }
+                Slider(
+                    value = settings.retryCount.toFloat(),
+                    onValueChange = { settings.retryCount = it.toInt().coerceIn(0, 10) },
+                    valueRange = 0f..10f,
+                    steps = 9
+                )
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+
+            // ---------- 主题与外观（对齐原版深色模式三态） ----------
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("主题与外观", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(0 to "跟随系统", 1 to "亮色", 2 to "暗色").forEach { (v, label) ->
+                        FilterChip(
+                            selected = darkMode.value == v,
+                            onClick = { darkMode.value = v },
+                            label = { Text(label) }
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+
+            // ---------- 关于（对齐原版关于页桌面子集） ----------
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("关于", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text("YunX Desktop v0.1.0-desktop", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                Text(
+                    "基于 YunX（云析）Android 版移植，Kotlin Multiplatform + Compose Multiplatform 构建。",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "开源协议：GNU AGPL-3.0（本软件完全免费开源，任何收费版本均为诈骗）",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "上游项目：YunX（CYQawa 著）· 本仓库：github.com/Oliver13211/YunX（desktop 分支）",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "支持平台：夸克 / UC / 迅雷 / 百度 / 139 / 123 云盘 · 桌面端：macOS / Windows（Linux 预留）",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "免责声明：本项目仅供个人学习与技术交流，请勿用于商业用途。下载内容版权归原作者所有，" +
+                        "请在下载后 24 小时内删除。使用本项目产生的任何后果由使用者自行承担。",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "提示：不建议使用百度网盘，可能导致账号被风控（与上游一致的风险警示）。",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error
+                )
             }
         }
     }

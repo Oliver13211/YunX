@@ -6,6 +6,7 @@
 
 package com.yunx.desktop
 
+import com.yunx.app.data.download.DownloadPlatform
 import com.yunx.app.platform.KeyValueStore
 import com.yunx.app.platform.defaultKeyValueStore
 
@@ -28,6 +29,27 @@ class DesktopSettings(private val store: KeyValueStore = defaultKeyValueStore())
         get() = (store.getLong(KEY_THREADS) ?: DEFAULT_THREADS.toLong()).toInt().coerceIn(1, 32)
         set(value) = store.putLong(KEY_THREADS, value.coerceIn(1, 32).toLong())
 
+    /** 按平台分片线程数（对齐原版 downloadThreadsFor；迅雷受 CDN 限制固定 8，Agent.md §5.3） */
+    fun threadsFor(platform: String): Int = when (platform) {
+        DownloadPlatform.XUNLEI -> 8
+        else -> (store.getLong("download.threads.$platform") ?: DEFAULT_THREADS.toLong()).toInt().coerceIn(1, 32)
+    }
+
+    fun setThreads(platform: String, value: Int) {
+        if (platform == DownloadPlatform.XUNLEI) return // 迅雷固定 8，设置不生效（§5.3）
+        store.putLong("download.threads.$platform", value.coerceIn(1, 32).toLong())
+    }
+
+    /** 失败自动重试次数（0-10，默认 3） */
+    var retryCount: Int
+        get() = (store.getLong(KEY_RETRY) ?: 3L).toInt().coerceIn(0, 10)
+        set(value) = store.putLong(KEY_RETRY, value.coerceIn(0, 10).toLong())
+
+    /** 深色模式：0=跟随系统 1=亮色 2=暗色（对齐原版 darkMode 三态） */
+    var darkMode: Int
+        get() = (store.getLong(KEY_DARK_MODE) ?: 0L).toInt().coerceIn(0, 2)
+        set(value) = store.putLong(KEY_DARK_MODE, value.coerceIn(0, 2).toLong())
+
     /** 内嵌登录组件（KCEF/JBR 运行时）是否已下载启用 */
     var embeddedLoginEnabled: Boolean
         get() = store.getLong(KEY_EMBEDDED_LOGIN) == 1L
@@ -43,6 +65,8 @@ class DesktopSettings(private val store: KeyValueStore = defaultKeyValueStore())
         const val KEY_THREADS = "download.threads"
         const val KEY_SPEED_LIMIT = "download.speedLimit"
         const val KEY_EMBEDDED_LOGIN = "login.embeddedEnabled"
+        const val KEY_RETRY = "download.retryCount"
+        const val KEY_DARK_MODE = "ui.darkMode"
         const val DEFAULT_MAX_CONCURRENT = 3
         const val DEFAULT_THREADS = 32
     }
