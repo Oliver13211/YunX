@@ -83,42 +83,24 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.yunx.app.data.db.AppDatabase
 import com.yunx.app.data.db.DownloadTaskEntity
-import com.yunx.app.data.db.BaiduAccountEntity
-import com.yunx.app.data.db.C139AccountEntity
 import com.yunx.app.data.db.Pan123AccountEntity
 import com.yunx.app.data.db.QuarkAccountEntity
-import com.yunx.app.data.db.UCAccountEntity
-import com.yunx.app.data.db.XunleiAccountEntity
-import com.yunx.app.data.repository.XunleiAccountRepository
 import com.yunx.app.data.db.get
 import com.yunx.app.data.download.ChunkDownloader
 import com.yunx.app.data.download.DownloadManager
 import com.yunx.app.data.download.DownloadPlatform
-import com.yunx.app.data.network.BaiduApi
-import com.yunx.app.data.network.BaiduConstants
-import com.yunx.app.data.network.C139Api
-import com.yunx.app.data.network.C139Constants
 import com.yunx.app.data.network.HttpClients
 import com.yunx.app.data.network.Pan123Api
 import com.yunx.app.data.network.Pan123Constants
 import com.yunx.app.data.network.QuarkApi
 import com.yunx.app.data.network.QuarkConstants
-import com.yunx.app.data.network.UCApi
-import com.yunx.app.data.network.UCConstants
-import com.yunx.app.data.network.XunleiApi
-import com.yunx.app.data.network.XunleiConstants
-import com.yunx.app.data.network.XunleiLoginStep
 import com.yunx.app.data.network.ShareLinkParser
 import com.yunx.app.data.network.SharePlatform
 import com.yunx.app.data.network.model.ShareFile
 import com.yunx.app.data.network.model.ShareSession
-import com.yunx.app.data.repository.BaiduResolveRepository
-import com.yunx.app.data.repository.C139ResolveRepository
 import com.yunx.app.data.repository.Pan123ResolveRepository
 import com.yunx.app.data.repository.QuarkResolveRepository
 import com.yunx.app.data.repository.ShareResolveRepository
-import com.yunx.app.data.repository.UCResolveRepository
-import com.yunx.app.data.repository.XunleiResolveRepository
 import com.yunx.app.data.security.DesktopCredentialCipher
 import kotlinx.coroutines.launch
 import java.awt.Desktop
@@ -250,17 +232,8 @@ private fun DesktopApp(trayText: MutableState<String>) {
     }
     val quarkDao = remember { db.quarkAccountDao() }
     val pan123Dao = remember { db.pan123AccountDao() }
-    val ucDao = remember { db.ucAccountDao() }
-    val baiduDao = remember { db.baiduAccountDao() }
-    val c139Dao = remember { db.c139AccountDao() }
-    val xunleiDao = remember { db.xunleiAccountDao() }
     val quarkApi = remember { QuarkApi() }
     val pan123Api = remember { Pan123Api() }
-    val ucApi = remember { UCApi() }
-    val baiduApi = remember { BaiduApi() }
-    val c139Api = remember { C139Api() }
-    val xunleiApi = remember { XunleiApi() }
-    val xunleiRepo = remember { XunleiAccountRepository(xunleiDao, xunleiApi) }
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     var embeddedReady by remember { mutableStateOf(settings.embeddedLoginEnabled) }
@@ -270,19 +243,6 @@ private fun DesktopApp(trayText: MutableState<String>) {
     var quarkStatus by remember { mutableStateOf("未登录") }
     var panToken by remember { mutableStateOf("") }
     var panStatus by remember { mutableStateOf("未登录") }
-    var ucCookie by remember { mutableStateOf("") }
-    var ucStatus by remember { mutableStateOf("未登录") }
-    var baiduCookie by remember { mutableStateOf("") }
-    var baiduStatus by remember { mutableStateOf("未登录") }
-    var c139Cookie by remember { mutableStateOf("") }
-    var c139Status by remember { mutableStateOf("未登录") }
-    var xlUser by remember { mutableStateOf("") }
-    var xlPass by remember { mutableStateOf("") }
-    var xlSms by remember { mutableStateOf("") }
-    var xlSmsCreditKey by remember { mutableStateOf("") }
-    var xlSmsToken by remember { mutableStateOf("") }
-    var xlStatus by remember { mutableStateOf("未登录") }
-    var xlBusy by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         quarkDao.getAccount()?.let {
@@ -290,18 +250,6 @@ private fun DesktopApp(trayText: MutableState<String>) {
         }
         pan123Dao.getAccount()?.let {
             if (it.accessToken.isNotBlank()) { panToken = it.accessToken; panStatus = "已登录（读取自本地加密库）" }
-        }
-        ucDao.getAccount()?.let {
-            if (it.cookie.isNotBlank()) { ucCookie = it.cookie; ucStatus = "已登录（读取自本地加密库）" }
-        }
-        baiduDao.getAccount()?.let {
-            if (it.cookie.isNotBlank()) { baiduCookie = it.cookie; baiduStatus = "已登录（读取自本地加密库）" }
-        }
-        c139Dao.getAccount()?.let {
-            if (it.cookie.isNotBlank()) { c139Cookie = it.cookie; c139Status = "已登录（读取自本地加密库）" }
-        }
-        xunleiDao.getAccount()?.let {
-            if (it.accessToken.isNotBlank()) { xlStatus = "已登录 · ${it.nickname}" }
         }
     }
 
@@ -507,214 +455,6 @@ private fun DesktopApp(trayText: MutableState<String>) {
                         }
                     }
                 )
-                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
-                LoginRow(
-                    label = "UC 网盘",
-                    status = ucStatus,
-                    embeddedReady = embeddedReady,
-                    embeddedPhase = embeddedPhase,
-                    onEnableEmbedded = {
-                        if (embeddedPhase == null) {
-                            embeddedPhase = "准备下载"
-                            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                                runCatching {
-                                    ensureKcef { phase, pct ->
-                                        embeddedPhase = if (pct != null) "$phase %.0f%%".format(pct * 100) else phase
-                                    }
-                                }.onSuccess {
-                                    settings.embeddedLoginEnabled = true
-                                    embeddedReady = true
-                                    embeddedPhase = null
-                                }.onFailure {
-                                    embeddedPhase = null
-                                    ucStatus = "组件下载失败：${it.message}"
-                                }
-                            }
-                        }
-                    },
-                    onEmbeddedLogin = { kcefLoginFor = SharePlatform.UC },
-                    loginUrl = UCConstants.LOGIN_URL,
-                    captureScript = """copy(document.cookie);'云析：Cookie 已复制，回到应用自动保存'""",
-                    hint = "也可手动粘贴整段 Cookie",
-                    value = ucCookie,
-                    onValueChange = { ucCookie = it },
-                    onSave = {
-                        val cookie = ucCookie.trim()
-                        if (cookie.isEmpty()) { ucStatus = "Cookie 为空"; return@LoginRow }
-                        if (!UCConstants.isValidCookie(cookie)) { ucStatus = "未检测到登录态"; return@LoginRow }
-                        scope.launch {
-                            runCatching {
-                                val nickname = ucApi.fetchNickname(cookie) ?: "UC用户"
-                                ucDao.upsert(UCAccountEntity(cookie = cookie, nickname = nickname))
-                            }
-                                .onSuccess { ucStatus = "已保存（AES-GCM 加密）" }
-                                .onFailure { ucStatus = "保存失败：${it.message}" }
-                        }
-                    }
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
-                LoginRow(
-                    label = "百度网盘",
-                    status = baiduStatus,
-                    embeddedReady = embeddedReady,
-                    embeddedPhase = embeddedPhase,
-                    onEnableEmbedded = {
-                        if (embeddedPhase == null) {
-                            embeddedPhase = "准备下载"
-                            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                                runCatching {
-                                    ensureKcef { phase, pct ->
-                                        embeddedPhase = if (pct != null) "$phase %.0f%%".format(pct * 100) else phase
-                                    }
-                                }.onSuccess {
-                                    settings.embeddedLoginEnabled = true
-                                    embeddedReady = true
-                                    embeddedPhase = null
-                                }.onFailure {
-                                    embeddedPhase = null
-                                    baiduStatus = "组件下载失败：${it.message}"
-                                }
-                            }
-                        }
-                    },
-                    onEmbeddedLogin = { kcefLoginFor = SharePlatform.BAIDU },
-                    loginUrl = BaiduConstants.LOGIN_URL,
-                    captureScript = """copy(document.cookie);'云析：Cookie 已复制，回到应用自动保存'""",
-                    hint = "手动粘贴含 BDUSS 的整段 Cookie",
-                    value = baiduCookie,
-                    onValueChange = { baiduCookie = it },
-                    onSave = {
-                        val cookie = baiduCookie.trim()
-                        if (cookie.isEmpty()) { baiduStatus = "Cookie 为空"; return@LoginRow }
-                        if (!BaiduConstants.isValidCookie(cookie)) { baiduStatus = "未检测到登录态（缺少 BDUSS）"; return@LoginRow }
-                        scope.launch {
-                            runCatching {
-                                val nickname = baiduApi.fetchNickname(cookie) ?: "百度用户"
-                                baiduDao.upsert(BaiduAccountEntity(cookie = cookie, nickname = nickname))
-                            }
-                                .onSuccess { baiduStatus = "已保存（AES-GCM 加密）" }
-                                .onFailure { baiduStatus = "保存失败：${it.message}" }
-                        }
-                    }
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
-                LoginRow(
-                    label = "139 网盘（和彩云）",
-                    status = c139Status,
-                    embeddedReady = embeddedReady,
-                    embeddedPhase = embeddedPhase,
-                    onEnableEmbedded = {
-                        if (embeddedPhase == null) {
-                            embeddedPhase = "准备下载"
-                            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                                runCatching {
-                                    ensureKcef { phase, pct ->
-                                        embeddedPhase = if (pct != null) "$phase %.0f%%".format(pct * 100) else phase
-                                    }
-                                }.onSuccess {
-                                    settings.embeddedLoginEnabled = true
-                                    embeddedReady = true
-                                    embeddedPhase = null
-                                }.onFailure {
-                                    embeddedPhase = null
-                                    c139Status = "组件下载失败：${it.message}"
-                                }
-                            }
-                        }
-                    },
-                    onEmbeddedLogin = { kcefLoginFor = SharePlatform.C139 },
-                    loginUrl = C139Constants.LOGIN_URL,
-                    captureScript = """copy(document.cookie);'云析：Cookie 已复制，回到应用自动保存'""",
-                    hint = "手动粘贴整段 Cookie（登录后需已开通个人云盘）",
-                    value = c139Cookie,
-                    onValueChange = { c139Cookie = it },
-                    onSave = {
-                        val cookie = c139Cookie.trim()
-                        if (cookie.isEmpty()) { c139Status = "Cookie 为空"; return@LoginRow }
-                        if (!C139Constants.isValidCookie(cookie)) { c139Status = "未检测到登录态"; return@LoginRow }
-                        scope.launch {
-                            runCatching { c139Dao.upsert(C139AccountEntity(cookie = cookie, nickname = "139用户")) }
-                                .onSuccess { c139Status = "已保存（AES-GCM 加密）" }
-                                .onFailure { c139Status = "保存失败：${it.message}" }
-                        }
-                    }
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
-                // 迅雷：纯 API 账号密码登录（可能触发短信验证），无需 WebView
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("迅雷网盘", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                        Text("账号密码登录，无需抓取", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(xlStatus, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = xlUser,
-                            onValueChange = { xlUser = it },
-                            modifier = Modifier.weight(1f),
-                            placeholder = { Text("手机号/邮箱", style = MaterialTheme.typography.bodySmall) },
-                            singleLine = true
-                        )
-                        OutlinedTextField(
-                            value = xlPass,
-                            onValueChange = { xlPass = it },
-                            modifier = Modifier.weight(1f),
-                            placeholder = { Text("密码", style = MaterialTheme.typography.bodySmall) },
-                            singleLine = true
-                        )
-                        Button(enabled = !xlBusy && xlUser.isNotBlank() && xlPass.isNotBlank(), onClick = {
-                            xlBusy = true
-                            scope.launch {
-                                runCatching {
-                                    val step = xunleiRepo.loginWithPassword(xlUser.trim(), xlPass)
-                                    when {
-                                        step.needSms -> {
-                                            xlSmsCreditKey = step.smsCreditKey
-                                            xlSmsToken = step.smsToken
-                                            xlStatus = "触发风控：请点「发送验证码」完成短信验证"
-                                        }
-                                        xunleiRepo.finishLogin(step, xlUser.trim()) ->
-                                            xlStatus = "登录成功 · ${step.nickname.ifBlank { "迅雷用户" }}"
-                                        else -> xlStatus = step.message.ifBlank { "登录失败" }
-                                    }
-                                }.onFailure { xlStatus = "登录失败：${it.message}" }
-                                xlBusy = false
-                            }
-                        }) { Text(if (xlBusy) "登录中…" else "登录") }
-                        Button(enabled = !xlBusy && xlSmsCreditKey.isNotBlank(), onClick = {
-                            xlBusy = true
-                            scope.launch {
-                                runCatching { xunleiRepo.sendSms(xlUser.trim()) }
-                                    .onSuccess { xlStatus = "验证码已发送，请查收短信" }
-                                    .onFailure { xlStatus = "发送失败：${it.message}" }
-                                xlBusy = false
-                            }
-                        }) { Text("发送验证码") }
-                    }
-                    if (xlSmsCreditKey.isNotBlank()) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            OutlinedTextField(
-                                value = xlSms,
-                                onValueChange = { xlSms = it },
-                                modifier = Modifier.weight(1f),
-                                placeholder = { Text("短信验证码", style = MaterialTheme.typography.bodySmall) },
-                                singleLine = true
-                            )
-                            Button(enabled = !xlBusy && xlSms.isNotBlank(), onClick = {
-                                xlBusy = true
-                                scope.launch {
-                                    runCatching {
-                                        if (xunleiRepo.loginWithSms(xlUser.trim(), xlSms.trim(), xlSmsCreditKey, xlSmsToken)) {
-                                            xlStatus = "登录成功"
-                                            xlSmsCreditKey = ""
-                                        } else xlStatus = "验证码登录失败"
-                                    }.onFailure { xlStatus = "登录失败：${it.message}" }
-                                    xlBusy = false
-                                }
-                            }) { Text("提交验证码") }
-                        }
-                    }
-                }
             }
         }
 
@@ -756,33 +496,13 @@ private fun DesktopApp(trayText: MutableState<String>) {
                             if (parsed == null) { message = "无法识别分享链接"; return@Button }
                             val repo: ShareResolveRepository = when (parsed.platform) {
                                 SharePlatform.QUARK -> QuarkResolveRepository(quarkApi)
-                                SharePlatform.UC -> UCResolveRepository(ucApi)
-                                SharePlatform.XUNLEI -> XunleiResolveRepository(
-                                    xunleiApi,
-                                    { xunleiRepo.getAccount()?.accessToken },
-                                    { xunleiRepo.getAccount()?.deviceId },
-                                    { xunleiRepo.getAccount()?.captchaToken },
-                                    // token 过期自动用 refresh_token 刷新并持久化（对齐 Android MainScreen）
-                                    refreshProvider = {
-                                        val acc = xunleiRepo.getAccount()
-                                        if (acc == null || acc.refreshToken.isBlank()) null
-                                        else xunleiApi.refreshToken(acc.refreshToken, acc.deviceId)?.also { (a, r) ->
-                                            xunleiRepo.updateTokens(a, r)
-                                        }
-                                    }
-                                )
-                                SharePlatform.BAIDU -> BaiduResolveRepository(baiduApi)
-                                SharePlatform.C139 -> C139ResolveRepository(c139Api)
                                 SharePlatform.PAN123 -> Pan123ResolveRepository(pan123Api) { panToken.trim().ifBlank { null } }
+                                else -> { message = "桌面版当前仅支持夸克 / 123 云盘链接"; return@Button }
                             }
                             val useCookie = when (parsed.platform) {
                                 SharePlatform.QUARK -> quarkCookie.trim()
-                                SharePlatform.UC -> ucCookie.trim()
-                                SharePlatform.BAIDU -> baiduCookie.trim()
-                                SharePlatform.C139 -> c139Cookie.trim()
                                 SharePlatform.PAN123 -> panToken.trim()
-                                // 迅雷凭证由 accountProvider 从加密 DAO 读取，不走 cookie 参数
-                                SharePlatform.XUNLEI -> ""
+                                else -> ""
                             }
                             if (useCookie.isEmpty()) { message = "请先登录（保存 Cookie/Token）"; return@Button }
                             resolving = true
@@ -886,30 +606,17 @@ private fun DesktopApp(trayText: MutableState<String>) {
                                         runCatching {
                                             val link = repo.getShareDownloadLink(s, file, sessionCookie).getOrThrow()
                                             // 请求头语义对齐 Android ResolveViewModel.enqueueDownload（§5.3 CDN 约束）
-                                            val platformConst = when (platform) {
-                                                SharePlatform.XUNLEI -> DownloadPlatform.XUNLEI
-                                                SharePlatform.UC -> DownloadPlatform.UC
-                                                SharePlatform.BAIDU -> DownloadPlatform.BAIDU
-                                                SharePlatform.C139 -> DownloadPlatform.C139
-                                                SharePlatform.PAN123 -> DownloadPlatform.PAN123
-                                                else -> DownloadPlatform.QUARK
-                                            }
-                                            val headers = when (platform) {
-                                                // 迅雷直链必须官方 app UA，浏览器 UA 触发 CDN 降级（200整文件）
-                                                SharePlatform.XUNLEI -> mapOf("User-Agent" to XunleiConstants.APP_UA)
-                                                SharePlatform.BAIDU -> mapOf(
-                                                    "Cookie" to sessionCookie, "User-Agent" to BaiduConstants.UA_NETDISK
+                                            val platformConst =
+                                                if (platform == SharePlatform.PAN123) DownloadPlatform.PAN123 else DownloadPlatform.QUARK
+                                            val headers = if (platform == SharePlatform.PAN123) {
+                                                mapOf(
+                                                    "User-Agent" to Pan123Constants.WEB_UA,
+                                                    "Referer" to Pan123Constants.DOWNLOAD_REFERER
                                                 )
-                                                SharePlatform.C139 -> mapOf("User-Agent" to C139Constants.PC_UA)
-                                                SharePlatform.UC -> mapOf(
-                                                    "Cookie" to sessionCookie, "User-Agent" to UCConstants.USER_AGENT,
-                                                    "Referer" to UCConstants.DOWNLOAD_REFERER, "Origin" to UCConstants.WEB_ORIGIN
-                                                )
-                                                SharePlatform.PAN123 -> mapOf(
-                                                    "User-Agent" to Pan123Constants.WEB_UA, "Referer" to Pan123Constants.DOWNLOAD_REFERER
-                                                )
-                                                else -> mapOf(
-                                                    "Cookie" to sessionCookie, "User-Agent" to QuarkConstants.API_USER_AGENT,
+                                            } else {
+                                                mapOf(
+                                                    "Cookie" to sessionCookie,
+                                                    "User-Agent" to QuarkConstants.API_USER_AGENT,
                                                     "Referer" to QuarkConstants.DOWNLOAD_REFERER
                                                 )
                                             }
@@ -1038,33 +745,9 @@ private fun DesktopApp(trayText: MutableState<String>) {
             platform = platform,
             onClose = { kcefLoginFor = null },
             onCaptured = { credential ->
-                // 校验门槛与昵称落库对齐 Android 端各 AccountRepository.save*Account
+                // 校验门槛与昵称落库对齐 Android QuarkAccountRepository.saveQuarkAccount
                 scope.launch {
                     when (platform) {
-                        SharePlatform.UC -> runCatching {
-                            val cookie = credential.trim()
-                            if (!UCConstants.isValidCookie(cookie)) throw IllegalStateException("未检测到登录态，请重新登录")
-                            ucDao.upsert(UCAccountEntity(cookie = cookie, nickname = ucApi.fetchNickname(cookie) ?: "UC用户"))
-                            ucCookie = cookie
-                            ucStatus = "已保存（AES-GCM 加密）"
-                            kcefLoginFor = null
-                        }.onFailure { ucStatus = "保存失败：${it.message}" }
-                        SharePlatform.BAIDU -> runCatching {
-                            val cookie = credential.trim()
-                            if (!BaiduConstants.isValidCookie(cookie)) throw IllegalStateException("未检测到登录态（缺少 BDUSS），请重新登录")
-                            baiduDao.upsert(BaiduAccountEntity(cookie = cookie, nickname = baiduApi.fetchNickname(cookie) ?: "百度用户"))
-                            baiduCookie = cookie
-                            baiduStatus = "已保存（AES-GCM 加密）"
-                            kcefLoginFor = null
-                        }.onFailure { baiduStatus = "保存失败：${it.message}" }
-                        SharePlatform.C139 -> runCatching {
-                            val cookie = credential.trim()
-                            if (!C139Constants.isValidCookie(cookie)) throw IllegalStateException("未检测到登录态，请重新登录")
-                            c139Dao.upsert(C139AccountEntity(cookie = cookie, nickname = "139用户"))
-                            c139Cookie = cookie
-                            c139Status = "已保存（AES-GCM 加密）"
-                            kcefLoginFor = null
-                        }.onFailure { c139Status = "保存失败：${it.message}" }
                         SharePlatform.PAN123 -> runCatching {
                             val token = credential.trim()
                             val nickname = pan123Api.fetchNickname(token)
