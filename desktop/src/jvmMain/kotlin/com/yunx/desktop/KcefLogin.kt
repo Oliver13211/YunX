@@ -179,15 +179,21 @@ internal fun KcefLoginWindow(
                                         token.ifBlank { throw IllegalStateException("未读取到 authorToken，请确认已在页面完成登录") }
                                     }
                                     else -> {
-                                        // 对齐 Android WebView getCookie 的完整性：多轮收集窗口内
-                                        // 访问全部 Cookie（含 HttpOnly），按 name 去重合并
+                                        // 对齐 Android WebView getCookie 的完整语义：
+                                        // visitUrlCookies(url) 是"将随该 URL 发送"的过滤语义，
+                                        // 会漏掉 path 受限的 Cookie（__kp/__kps/__ktd 等因此丢失）；
+                                        // 改为 visitAllCookies 全量访问（url=null），按域过滤后合并
                                         val seen = LinkedHashMap<String, String>()
                                         KCEFCookieManager().getCookiesWhileBlocking(
-                                            QuarkConstants.COOKIE_DOMAIN,
+                                            url = null,
                                             includeHttpOnly = true,
                                             delay = 200L,
-                                            predicate = { iter, _ -> iter <= 5 }
-                                        ).forEach { c -> seen[c.name] = c.value ?: "" }
+                                            predicate = { iter, _ -> iter <= 7 }
+                                        ).forEach { c ->
+                                            if (c.domain?.contains("quark.cn") == true) {
+                                                seen[c.name] = c.value ?: ""
+                                            }
+                                        }
                                         seen.entries.joinToString("; ") { (k, v) -> "$k=$v" }
                                     }
                                 }

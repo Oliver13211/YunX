@@ -765,7 +765,12 @@ private fun DesktopApp(trayText: MutableState<String>) {
                             val nickname = quarkApi.fetchNickname(cookie) ?: "夸克用户"
                             quarkDao.upsert(QuarkAccountEntity(cookie = cookie, nickname = nickname))
                             quarkCookie = cookie
-                            quarkStatus = "已保存（AES-GCM 加密）· ${nickname}"
+                            val fields = cookie.split("; ").count { it.contains('=') }
+                            // 关键字段自检：原版个人盘/分享 API 依赖的 Cookie 键
+                            val required = listOf("__pus", "__puus", "__kp", "__kps", "__ktd", "__uid")
+                            val missing = required.filter { !cookie.contains("$it=") }
+                            quarkStatus = "已保存 · ${nickname} · ${fields}个字段" +
+                                (if (missing.isEmpty()) " · 关键字段✓" else " · 缺少${missing.joinToString("/")}")
                             kcefLoginFor = null
                         }.onFailure { quarkStatus = "保存失败：${it.message}" }
                     }
