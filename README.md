@@ -40,6 +40,18 @@
 3. 浏览分享内容，点击文件获取下载直链
 4. 「下载」页查看进度，支持暂停 / 继续 / 删除 / 打开
 
+## 桌面版（YunX Desktop）
+
+`desktop` 分支将本项目移植为跨平台桌面应用（macOS / Windows，Linux 预留）：Kotlin Multiplatform 共享解析与下载核心，Compose Multiplatform 构建界面，jpackage 捆绑运行时分发（dmg / msi，无需另装 Java）。
+
+- 下载：[Releases](https://github.com/Oliver13211/YunX/releases) 中 `desktop-v*` 标签的版本
+- macOS dmg 未公证：首次运行请右键 →「打开」，或在「系统设置 → 隐私与安全性」中放行
+- Windows msi 未签名：SmartScreen 提示时点「更多信息」→「仍要运行」
+- 内嵌浏览器登录组件（可选）首次使用时由 KCEF 下载运行时（约 365MB，受限网络可设 `YUNX_PROXY=host:port` 走代理）
+- 桌面版相对 Android 版的改动：反篡改自检模块不迁移（完整性改由 GitHub Releases 官方渠道 + SHA-256 校验和承担）；凭证加密改用软件密钥 AES-GCM（密文格式与 Android 端互通）；新增崩溃日志（`~/.yunx/logs/`）、检查更新与桌面端设置
+
+构建：`./gradlew :desktop:packageDmg`（macOS）/ `.\gradlew.bat :desktop:packageMsi`（Windows）。
+
 ## 技术栈
 
 - Kotlin

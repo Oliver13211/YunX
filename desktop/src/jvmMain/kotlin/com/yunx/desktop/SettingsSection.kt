@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -23,17 +24,20 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import javax.swing.JFileChooser
 
 /** 平台线程设置行（key 与 DownloadPlatform 常量一致）。 */
@@ -56,6 +60,10 @@ fun SettingsSection(settings: DesktopSettings, darkMode: MutableState<Int> = mut
     var speedInput by remember {
         mutableStateOf(if (settings.speedLimit > 0) "%.0f".format(settings.speedLimit / 1048576.0) else "")
     }
+    // 检查更新状态（函数级：对话框在 Card 外渲染）
+    var updateStatus by remember { mutableStateOf<String?>(null) }
+    var foundUpdate by remember { mutableStateOf<UpdateChecker.Update?>(null) }
+    val checkScope = rememberCoroutineScope()
 
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(
@@ -202,16 +210,32 @@ fun SettingsSection(settings: DesktopSettings, darkMode: MutableState<Int> = mut
 
             HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
 
-            // ---------- 关于（对齐原版关于页桌面子集） ----------
+            // ---------- 关于（对齐原版关于页桌面子集）+ 检查更新（Phase 5） ----------
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("关于", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Text("YunX Desktop v0.1.0-desktop", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                Text("YunX Desktop v${AppInfo.VERSION}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = {
+                        checkScope.launch {
+                            updateStatus = "正在检查…"
+                            foundUpdate = UpdateChecker.check()
+                            updateStatus = if (foundUpdate == null) "已是最新版本" else null
+                        }
+                    }) { Text("检查更新") }
+                    updateStatus?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
                 Text(
                     "基于 YunX（云析）Android 版移植，Kotlin Multiplatform + Compose Multiplatform 构建。",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
                     "开源协议：GNU AGPL-3.0（本软件完全免费开源，任何收费版本均为诈骗）",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "协议全文随安装包分发（应用包内 resources/LICENSE），亦可于仓库 LICENSE 查看。",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
@@ -234,4 +258,38 @@ fun SettingsSection(settings: DesktopSettings, darkMode: MutableState<Int> = mut
             }
         }
     }
+
+    // 检查到新版本：对话框提示（仅设置页手动触发或启动自动检查时出现）
+    foundUpdate?.let { update ->
+        UpdateFoundDialog(update) { foundUpdate = null }
+    }
+}
+
+/** 新版本提示对话框（设置页手动检查与启动自动检查共用） */
+@Composable
+fun UpdateFoundDialog(update: UpdateChecker.Update, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("发现新版本 v${update.version}") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    "当前版本 v${AppInfo.VERSION}",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (update.notes.isNotBlank()) {
+                    Text(update.notes, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                onDismiss()
+                openBrowser(update.downloadUrl)
+            }) { Text("前往下载") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("以后再说") }
+        }
+    )
 }

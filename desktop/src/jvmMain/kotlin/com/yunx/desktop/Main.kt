@@ -137,7 +137,7 @@ import java.awt.Desktop
 import java.net.URI
 
 /** 系统浏览器打开登录页（Phase 4 方案B：网页登录 → 回贴 Cookie/Token；KCEF 待网络条件允许后接入）。 */
-private fun openBrowser(url: String) {
+internal fun openBrowser(url: String) {
     runCatching { Desktop.getDesktop().browse(URI(url)) }
 }
 
@@ -169,6 +169,8 @@ private val yunxTrayIcon = object : Painter() {
 }
 
 fun main(args: Array<String>) {
+    // 崩溃处理器最先安装：任何后续初始化阶段的未捕获异常都要落日志（~/.yunx/logs）
+    CrashHandler.install()
     // 内嵌登录组件（KCEF）首次下载走 Java Http 层：设置 YUNX_PROXY=host:port 可走代理
     // （运行时源为 JetBrains 官方 CDN，一般无需代理）
     System.getenv("YUNX_PROXY")?.takeIf { it.contains(':') }?.let { proxy ->
@@ -376,6 +378,13 @@ private fun DesktopApp(settings: DesktopSettings, darkMode: MutableState<Int>, t
     var cloudDirStack = remember { mutableStateListOf<Pair<String, String>>() } // fid to 名称
     var cloudLoading by remember { mutableStateOf(false) }
     var cloudMessage by remember { mutableStateOf("登录夸克后可浏览自己的网盘文件") }
+
+    // 启动自动检查更新（Phase 5）：延迟 3 秒避开首屏，失败静默，发现新版本才提示
+    var autoUpdate by remember { mutableStateOf<UpdateChecker.Update?>(null) }
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(3000)
+        autoUpdate = UpdateChecker.check()
+    }
 
     /** 下载并初始化 KCEF 内嵌登录组件（一次性）；进度写 embeddedPhase，失败回调平台状态。 */
     fun startKcefDownload(onFail: (String) -> Unit) {
@@ -946,6 +955,11 @@ private fun DesktopApp(settings: DesktopSettings, darkMode: MutableState<Int>, t
             onClose = { showXunleiLogin = false },
             onStatus = { xlStatus = it }
         )
+    }
+
+    // 启动自动检查更新的提示框
+    autoUpdate?.let { update ->
+        UpdateFoundDialog(update) { autoUpdate = null }
     }
 
     // KCEF 内嵌登录窗（可选组件：下载启用后可用）

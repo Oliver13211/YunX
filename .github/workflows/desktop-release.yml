@@ -1,0 +1,99 @@
+# YunX Desktop 三平台构建矩阵（Linux 按决策 #5 暂缓，后续需要时在 matrix 增加 ubuntu）
+# - tag 触发：推送 desktop-v* 标签 → 构建 dmg/msi → 创建 GitHub Release 并附 SHA-256 校验和
+# - 手动触发：workflow_dispatch 仅构建产物（不发布）
+name: desktop-release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'desktop-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: 打包 ${{ matrix.artifact }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14        # Apple Silicon → dmg（arm64）
+            artifact: yunx-desktop-macos-arm64
+          - os: windows-latest  # x64 → msi
+            artifact: yunx-desktop-windows-x64
+    steps:
+      - uses: actions/checkout@v4
+
+      # 发布一致性：tag 必须与 AppInfo.VERSION 对应（手动触发无 tag，跳过）
+      - name: 校验标签与 AppInfo 版本一致
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          APP_VERSION=$(grep -oE 'VERSION = "[0-9.]+"' desktop/src/jvmMain/kotlin/com/yunx/desktop/AppInfo.kt | cut -d '"' -f2)
+          echo "AppInfo.VERSION=${APP_VERSION}，tag=${GITHUB_REF_NAME}"
+          [ "${GITHUB_REF_NAME}" = "desktop-v${APP_VERSION}" ] || { echo "::error::标签与 AppInfo.VERSION 不一致"; exit 1; }
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # composeApp 为 KMP 模块（含 androidTarget），AGP 配置阶段需要 Android SDK；
+      # setup-android 会安装 cmdline-tools 并接受许可，缺失的 platform/build-tools 由 AGP 自行补下
+      - uses: android-actions/setup-android@v3
+
+      - name: 确保 WiX（jpackage 打 msi 依赖 light/candle）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command light -ErrorAction SilentlyContinue)) { choco install wixtoolset -y }
+
+      - name: 构建 ${{ matrix.artifact }}
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            ./gradlew :desktop:packageDistributionForCurrentOS --no-daemon
+          else
+            ./gradlew.bat :desktop:packageDistributionForCurrentOS --no-daemon
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            desktop/build/compose/binaries/main/dmg/*.dmg
+            desktop/build/compose/binaries/main/msi/*.msi
+          if-no-files-found: error
+
+  release:
+    name: 创建 GitHub Release
+    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: 生成 SHA-256 校验和
+        shell: bash
+        run: |
+          cd dist
+          find . -type f \( -name '*.dmg' -o -name '*.msi' \) -exec sha256sum {} \; \
+            | sed 's|\./||' > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: 创建 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "YunX Desktop ${GITHUB_REF_NAME#desktop-}" \
+            --notes-file .github/RELEASE_NOTES_desktop.md \
+            dist/*/*.dmg dist/*/*.msi dist/SHA256SUMS.txt

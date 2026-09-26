@@ -123,10 +123,18 @@ expect fun currentLogSink()  // android.util.Log / slf4j
 **交付判据**：六家网盘在 macOS 桌面端完成登录→解析→下载全链路；凭证重启后免登录；备份文件与 Android 版互导成功。
 **预估**：5–8 天。
 
-### Phase 5：打磨与三平台分发
+### Phase 5：打磨与三平台分发（✅ 2026-09-26 本地交付，CI 待首次触发验收）
 **范围**：三平台托盘/通知（通知降级为可选）；崩溃处理器→日志文件 + 错误对话框；`UpdateChecker`→检查 GitHub Releases；`LaunchGate` 反篡改自检**不迁移**（桌面无 APK 签名场景，完整性改由 GitHub Releases 官方渠道 + SHA-256 校验和承担，见风险表）；jpackage 配置（dmg/msi/deb，捆绑 JBR）；GitHub Actions 三平台构建矩阵；macOS **直接 dmg 分发（未公证、不上架，已决策不购买开发者账号）**；Windows 可选签名。
 **交付判据**：CI 三平台产物可下载；macOS dmg 首次运行可通过右键打开/系统设置放行（发布说明写明操作步骤）；Windows 无证书包首次运行可通过；安装包体积记录在案（预估 80–150MB，捆绑 JVM 所致，如实接受）。
 **预估**：3–5 天。
+> **交付记录（2026-09-26）**：
+> - **崩溃处理器**：`CrashHandler` 启动即装（含 EDT），未捕获异常写 `~/.yunx/logs/crash-<时间>.txt`（保留最近 10 份）→ Swing 错误对话框 → 退出；日志只含堆栈与环境信息，不含凭证。
+> - **更新检查**：`UpdateChecker` 查 GitHub Releases（仅 `desktop-v*` 标签参与，与上游 Android 发布互不干扰），失败静默；设置页手动「检查更新」+ 启动 3 秒后自动检查，发现新版弹对话框跳转下载。版本单源 `AppInfo.VERSION = 1.0.0`（jpackage 硬校验 MAJOR > 0，故从 0.1.0 提为 1.0.0），`packageVersion` 由 build 脚本从 AppInfo.kt 解析。
+> - **jpackage**：dmg/msi 双格式；`includeAllModules`（sqlite-bundled/coroutines-swing 的 ServiceLoader 依赖非必需模块）；AGPL 全文经 appResources 进包为 `Contents/app/resources/LICENSE`（jpackage 的 licenseFile 在 macOS 不落盘，合规清单第 1 项的替代实现）；macOS bundleID `com.yunx.desktop`；Windows menu/shortcut/dirChooser + 固定 upgradeUuid；JCEF `--add-opens` 全组写入打包启动配置（已验证 .cfg）。
+> - **运行时决策变更（如实记录）**：计划原文「捆绑 JBR」实际落地为捆绑构建用 JDK（temurin 17，与 `:desktop:run` 同 JVM、行为已实测）。不捆含 JCEF 的 JBR 的原因：其 org.cef 类会与 KCEF 首次使用内嵌登录时自下载的运行时重复加载，冲突风险未验证；KCEF 运行时保持按需下载（约 365MB，`YUNX_PROXY` 可走代理）。
+> - **CI**：`.github/workflows/desktop-release.yml`——macos-14（arm64 dmg）+ windows-latest（x64 msi）矩阵；Android SDK（AGP 需要）与 WiX 自举步骤；tag 与 AppInfo 版本一致性校验；tag 触发 `gh release create` 附 `SHA256SUMS.txt`；发布说明模板 `.github/RELEASE_NOTES_desktop.md`（含未公证放行步骤、崩溃日志位置）。Linux 按决策 #5 暂缓。
+> - **体积记录**：dmg **148MB**，app image 247MB（runtime 135M + app 111M；83 个 jar 独立存放非 fat-jar，coroutines-swing ServiceLoader 完好）——略超预估上限（80–150MB），主因 includeAllModules 捆全量 JDK 模块。
+> - **验收状态**：本地 `:desktop:packageDmg` 构建通过、bundle 内容逐项验证（LICENSE / opens / 关键 jar / 启动配置）；打包产物实际启动、Windows msi、CI 首跑待用户验收。
 
 **总量估算：单人专注约 17–28 个工作日（4–6 周自然周）。**
 
