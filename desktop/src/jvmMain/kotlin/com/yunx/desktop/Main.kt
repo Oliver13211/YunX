@@ -122,6 +122,7 @@ import com.yunx.app.data.network.XunleiConstants
 import com.yunx.app.data.network.XunleiLoginStep
 import com.yunx.app.data.network.ShareLinkParser
 import com.yunx.app.data.network.SharePlatform
+import com.yunx.app.data.network.model.DownloadLink
 import com.yunx.app.data.network.model.ShareFile
 import com.yunx.app.data.network.model.ShareSession
 import com.yunx.app.data.repository.BaiduResolveRepository
@@ -152,6 +153,23 @@ internal fun formatSize(bytes: Long): String = when {
 internal fun rootDirFid(platform: SharePlatform): String = when (platform) {
     SharePlatform.BAIDU -> ""
     else -> "0"
+}
+
+/** 各网盘「我的文件」根目录标识（对齐 Android 各 CloudViewModel）：百度/139 用路径 "/"，迅雷空串=根，其余 "0"。 */
+internal fun driveRootFid(platformKey: String): String = when (platformKey) {
+    "baidu", "c139" -> "/"
+    "xunlei" -> ""
+    else -> "0"
+}
+
+/** 账号卡 key → DownloadPlatform 常量（String，下载入队用；CDN 约束见 Agent.md §5.3）。 */
+internal fun drivePlatformConst(platformKey: String): String = when (platformKey) {
+    "uc" -> DownloadPlatform.UC
+    "baidu" -> DownloadPlatform.BAIDU
+    "c139" -> DownloadPlatform.C139
+    "pan123" -> DownloadPlatform.PAN123
+    "xunlei" -> DownloadPlatform.XUNLEI
+    else -> DownloadPlatform.QUARK
 }
 
 /** 主界面左侧导航的 4 个选项卡（对齐原版 MainTab.kt；图标在 rail 处直接引用避免与常量名冲突）。 */
@@ -375,10 +393,10 @@ private fun DesktopApp(settings: DesktopSettings, darkMode: MutableState<Int>, t
 
     // ---------- 界面导航（左侧 4 选项卡，对齐原版 MainTab） ----------
     var tab by remember { mutableStateOf(0) }
-    var cloudFiles by remember { mutableStateOf<List<ShareFile>>(emptyList()) }
-    var cloudDirStack = remember { mutableStateListOf<Pair<String, String>>() } // fid to 名称
-    var cloudLoading by remember { mutableStateOf(false) }
-    var cloudMessage by remember { mutableStateOf("登录夸克后可浏览自己的网盘文件") }
+    // 各网盘「我的文件」二级浏览状态（收进账号卡展开区；key 与 expandedLogin 一致）
+    val driveStates = remember {
+        listOf("quark", "pan123", "uc", "baidu", "c139", "xunlei").associateWith { DriveBrowseState() }
+    }
 
     // 启动自动检查更新（Phase 5）：延迟 3 秒避开首屏，失败静默，发现新版本才提示
     var autoUpdate by remember { mutableStateOf<UpdateChecker.Update?>(null) }
@@ -407,33 +425,163 @@ private fun DesktopApp(settings: DesktopSettings, darkMode: MutableState<Int>, t
         }
     }
 
-    /** 加载个人盘指定目录（根目录 fid="0"）。Cookie 以 DB 为唯一事实源
-     *  （对齐原版 Repository 层语义），不依赖 UI 状态变量；listCloudFiles
-     *  返回 null 视为 Cookie 失效。 */
-    fun loadCloudDir(fid: String) {
-        cloudLoading = true
-        scope.launch {
-            val cookie = runCatching { quarkDao.getAccount()?.cookie.orEmpty().trim() }
-                .getOrDefault("")
-            if (cookie.isBlank()) {
-                cloudMessage = "未检测到登录凭证，请先在 ① 登录夸克"
-            } else {
-                quarkCookie = cookie // 回填到输入框，便于用户查看/手动复制
-                runCatching { quarkApi.listCloudFiles(fid, cookie) }
-                    .onSuccess { list ->
-                        if (list == null) {
-                            cloudMessage = "列取失败：Cookie 可能已失效，请重新登录"
-                        } else {
-                            cloudFiles = list
-                            cloudMessage = "当前目录 ${list.size} 项"
-                        }
-                    }
-                    .onFailure {
-                        it.printStackTrace()
-                        cloudMessage = "列取失败：${it.message}"
-                    }
+    /** 列个人盘目录（各平台凭证与 API 对齐 Android 各 CloudViewModel 的根目录语义） */
+    suspend fun listOwnFiles(platformKey: String, fid: String): List<ShareFile> = when (platformKey) {
+        "quark" -> {
+            val cookie = quarkDao.getAccount()?.cookie.orEmpty().trim()
+            if (cookie.isBlank()) throw IllegalStateException("未登录：请先在上方完成夸克授权")
+            quarkCookie = cookie
+            quarkApi.listCloudFiles(fid, cookie)
+                ?: throw IllegalStateException("Cookie 可能已失效，请重新登录")
+        }
+        "uc" -> {
+            val cookie = ucDao.getAccount()?.cookie.orEmpty().trim()
+            if (cookie.isBlank()) throw IllegalStateException("未登录：请先在上方完成 UC 授权")
+            ucCookie = cookie
+            ucApi.listCloudFiles(fid, cookie)
+                ?: throw IllegalStateException("Cookie 可能已失效，请重新登录")
+        }
+        "baidu" -> {
+            val cookie = baiduDao.getAccount()?.cookie.orEmpty().trim()
+            if (cookie.isBlank()) throw IllegalStateException("未登录：请先在上方完成百度授权")
+            baiduCookie = cookie
+            baiduApi.listCloudFiles(fid, cookie)
+        }
+        "c139" -> {
+            val cookie = c139Dao.getAccount()?.cookie.orEmpty().trim()
+            if (cookie.isBlank()) throw IllegalStateException("未登录：请先在上方完成 139 授权")
+            c139Cookie = cookie
+            c139Api.listCloudFiles(fid, cookie)
+        }
+        "pan123" -> {
+            val token = pan123Dao.getAccount()?.accessToken.orEmpty().trim()
+            if (token.isBlank()) throw IllegalStateException("未登录：请先在上方保存 123 云盘 Token")
+            panToken = token
+            pan123Api.listCloudFiles(fid, token)
+        }
+        "xunlei" -> {
+            val acc = xunleiRepo.getAccount()
+            if (acc == null || acc.accessToken.isBlank()) throw IllegalStateException("未登录：请先登录迅雷账号")
+            xunleiApi.getFiles(fid, acc.accessToken, acc.deviceId, acc.captchaToken)
+                ?: throw IllegalStateException("登录态可能已失效，请重新登录")
+        }
+        else -> emptyList()
+    }
+
+    /** 个人盘文件取直链（返回直链与下载请求头，请求头对齐 Android 各 CloudViewModel） */
+    suspend fun ownDownloadLink(platformKey: String, file: ShareFile): Pair<DownloadLink, Map<String, String>> =
+        when (platformKey) {
+            "quark" -> {
+                val cookie = quarkDao.getAccount()?.cookie.orEmpty().trim()
+                val link = quarkApi.getDownloadLink(file.fid, cookie)
+                    ?: throw IllegalStateException("未取到直链")
+                link to mapOf(
+                    "Cookie" to cookie,
+                    "User-Agent" to QuarkConstants.API_USER_AGENT,
+                    "Referer" to QuarkConstants.DOWNLOAD_REFERER
+                )
             }
-            cloudLoading = false
+            "uc" -> {
+                val cookie = ucDao.getAccount()?.cookie.orEmpty().trim()
+                val link = ucApi.cloudGetDownloadLink(file.fid, cookie)
+                    ?: throw IllegalStateException("未取到直链")
+                link to mapOf(
+                    "Cookie" to cookie,
+                    "User-Agent" to UCConstants.USER_AGENT,
+                    "Referer" to UCConstants.DOWNLOAD_REFERER,
+                    "Origin" to UCConstants.WEB_ORIGIN
+                )
+            }
+            "baidu" -> {
+                val cookie = baiduDao.getAccount()?.cookie.orEmpty().trim()
+                val url = baiduApi.locateDownload(file.fidToken, cookie)
+                DownloadLink(fid = file.fid, filename = file.fname, downloadUrl = url, size = file.fsize) to mapOf(
+                    "Cookie" to cookie, "User-Agent" to BaiduConstants.UA_NETDISK
+                )
+            }
+            "c139" -> {
+                val cookie = c139Dao.getAccount()?.cookie.orEmpty().trim()
+                val link = c139Api.getDownloadUrl(file.fid, cookie)
+                    ?: throw IllegalStateException("未取到直链")
+                // getDownloadUrl 响应不含 name（§4.6），文件名用列表项回填
+                link.copy(filename = file.fname) to mapOf("User-Agent" to C139Constants.PC_UA)
+            }
+            "pan123" -> {
+                val token = pan123Dao.getAccount()?.accessToken.orEmpty().trim()
+                val link = pan123Api.getDownloadLink(file, token)
+                    ?: throw IllegalStateException("未取到直链")
+                link to mapOf(
+                    "User-Agent" to Pan123Constants.WEB_UA,
+                    "Referer" to Pan123Constants.DOWNLOAD_REFERER
+                )
+            }
+            "xunlei" -> {
+                val acc = xunleiRepo.getAccount() ?: throw IllegalStateException("未登录迅雷")
+                val link = xunleiApi.getFileDetail(file.fid, acc.accessToken, acc.deviceId, acc.captchaToken)
+                    ?: throw IllegalStateException("未取到直链")
+                link to mapOf("User-Agent" to XunleiConstants.APP_UA)
+            }
+            else -> throw IllegalStateException("未知网盘")
+        }
+
+    /** 加载某网盘「我的文件」目录（fid 语义见 driveRootFid）。凭证以 DB 为唯一事实源
+     *  （对齐原版 Repository 层语义），不依赖 UI 状态变量；成功后回填输入框便于查看。 */
+    fun loadDriveDir(platformKey: String, fid: String) {
+        val st = driveStates.getValue(platformKey)
+        st.loading = true
+        scope.launch {
+            runCatching { listOwnFiles(platformKey, fid) }
+                .onSuccess {
+                    st.files = it
+                    st.message = "当前目录 ${it.size} 项"
+                }
+                .onFailure {
+                    it.printStackTrace()
+                    st.message = "列取失败：${it.message}"
+                }
+            st.loading = false
+        }
+    }
+
+    /** 进入个人盘子目录（面包屑入栈 + 加载） */
+    fun driveEnterDir(platformKey: String, file: ShareFile) {
+        val st = driveStates.getValue(platformKey)
+        st.dirStack.add(file.fid to file.fname)
+        loadDriveDir(platformKey, file.fid)
+    }
+
+    /** 个人盘文件直链复制 */
+    fun driveGetLink(platformKey: String, file: ShareFile) {
+        val st = driveStates.getValue(platformKey)
+        st.loading = true
+        scope.launch {
+            runCatching { ownDownloadLink(platformKey, file).first }
+                .onSuccess {
+                    clipboard.setText(AnnotatedString(it.downloadUrl))
+                    st.message = "直链已复制到剪贴板"
+                }
+                .onFailure { st.message = "取直链失败：${it.message}" }
+            st.loading = false
+        }
+    }
+
+    /** 个人盘文件下载入队 */
+    fun driveDownload(platformKey: String, file: ShareFile) {
+        val st = driveStates.getValue(platformKey)
+        st.loading = true
+        scope.launch {
+            runCatching {
+                val (link, headers) = ownDownloadLink(platformKey, file)
+                downloadManager.enqueue(
+                    link.downloadUrl,
+                    link.filename.ifBlank { file.fname },
+                    headers,
+                    link.size,
+                    drivePlatformConst(platformKey)
+                )
+            }.onSuccess { st.message = "已加入下载任务" }
+                .onFailure { it.printStackTrace(); st.message = "加入下载失败：${it.message}" }
+            st.loading = false
         }
     }
 
@@ -463,10 +611,7 @@ private fun DesktopApp(settings: DesktopSettings, darkMode: MutableState<Int>, t
         }
     }
 
-    // 网盘页进入时自动加载根目录
-    LaunchedEffect(tab) {
-        if (tab == 1 && cloudFiles.isEmpty()) loadCloudDir("0")
-    }
+    // 「我的文件」浏览收进账号卡二级展开区，点开时才加载（见 DriveBrowserSection）
 
     Row(Modifier.fillMaxSize()) {
         NavigationRail {
@@ -505,7 +650,7 @@ private fun DesktopApp(settings: DesktopSettings, darkMode: MutableState<Int>, t
         // ---------- 登录卡（手风琴折叠：收起=名称+状态，展开=授权方式） ----------
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("① 网盘登录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text("网盘登录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text("点击网盘展开授权方式", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
                 var expandedLogin by remember { mutableStateOf<String?>(null) }
@@ -535,6 +680,14 @@ private fun DesktopApp(settings: DesktopSettings, darkMode: MutableState<Int>, t
                             else quarkStatus = "未检测到登录态（缺少 __pus/__puus）"
                         }
                     )
+                    DriveBrowserSection(
+                        "quark",
+                        driveStates.getValue("quark"),
+                        onLoadDir = { loadDriveDir("quark", it) },
+                        onEnterDir = { driveEnterDir("quark", it) },
+                        onGetLink = { driveGetLink("quark", it) },
+                        onDownload = { driveDownload("quark", it) }
+                    )
                 }
                 AccountCard("123 云盘", Color(0xFF3B82F6), panStatus, expandedLogin == "pan123", { toggle("pan123") }) {
                     LoginBody(
@@ -555,6 +708,14 @@ private fun DesktopApp(settings: DesktopSettings, darkMode: MutableState<Int>, t
                                 }
                             } else panStatus = "Token 为空"
                         }
+                    )
+                    DriveBrowserSection(
+                        "pan123",
+                        driveStates.getValue("pan123"),
+                        onLoadDir = { loadDriveDir("pan123", it) },
+                        onEnterDir = { driveEnterDir("pan123", it) },
+                        onGetLink = { driveGetLink("pan123", it) },
+                        onDownload = { driveDownload("pan123", it) }
                     )
                 }
                 AccountCard("UC 网盘", Color(0xFFEF7C00), ucStatus, expandedLogin == "uc", { toggle("uc") }) {
@@ -581,6 +742,14 @@ private fun DesktopApp(settings: DesktopSettings, darkMode: MutableState<Int>, t
                             else ucStatus = "未检测到登录态"
                         }
                     )
+                    DriveBrowserSection(
+                        "uc",
+                        driveStates.getValue("uc"),
+                        onLoadDir = { loadDriveDir("uc", it) },
+                        onEnterDir = { driveEnterDir("uc", it) },
+                        onGetLink = { driveGetLink("uc", it) },
+                        onDownload = { driveDownload("uc", it) }
+                    )
                 }
                 AccountCard("百度网盘", Color(0xFF2932E1), baiduStatus, expandedLogin == "baidu", { toggle("baidu") }) {
                     LoginBody(
@@ -606,6 +775,14 @@ private fun DesktopApp(settings: DesktopSettings, darkMode: MutableState<Int>, t
                             else baiduStatus = "未检测到登录态（缺少 BDUSS）"
                         }
                     )
+                    DriveBrowserSection(
+                        "baidu",
+                        driveStates.getValue("baidu"),
+                        onLoadDir = { loadDriveDir("baidu", it) },
+                        onEnterDir = { driveEnterDir("baidu", it) },
+                        onGetLink = { driveGetLink("baidu", it) },
+                        onDownload = { driveDownload("baidu", it) }
+                    )
                 }
                 AccountCard("139 网盘（和彩云）", Color(0xFF0EA5E9), c139Status, expandedLogin == "c139", { toggle("c139") }) {
                     LoginBody(
@@ -628,6 +805,14 @@ private fun DesktopApp(settings: DesktopSettings, darkMode: MutableState<Int>, t
                             else c139Status = "未检测到登录态"
                         }
                     )
+                    DriveBrowserSection(
+                        "c139",
+                        driveStates.getValue("c139"),
+                        onLoadDir = { loadDriveDir("c139", it) },
+                        onEnterDir = { driveEnterDir("c139", it) },
+                        onGetLink = { driveGetLink("c139", it) },
+                        onDownload = { driveDownload("c139", it) }
+                    )
                 }
                 AccountCard("迅雷网盘", Color(0xFF1E6FFF), xlStatus, expandedLogin == "xunlei", { toggle("xunlei") }) {
                     Text(
@@ -638,6 +823,14 @@ private fun DesktopApp(settings: DesktopSettings, darkMode: MutableState<Int>, t
                         Button(onClick = { showXunleiLogin = true }) { Text("打开登录窗口") }
                         Text(xlStatus, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                    DriveBrowserSection(
+                        "xunlei",
+                        driveStates.getValue("xunlei"),
+                        onLoadDir = { loadDriveDir("xunlei", it) },
+                        onEnterDir = { driveEnterDir("xunlei", it) },
+                        onGetLink = { driveGetLink("xunlei", it) },
+                        onDownload = { driveDownload("xunlei", it) }
+                    )
                 }
             }
         }
@@ -647,7 +840,7 @@ private fun DesktopApp(settings: DesktopSettings, darkMode: MutableState<Int>, t
         // ---------- 解析卡 ----------
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("② 分享解析", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text("分享解析", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = shareText,
@@ -742,7 +935,7 @@ private fun DesktopApp(settings: DesktopSettings, darkMode: MutableState<Int>, t
             Card(Modifier.fillMaxWidth().weight(1f), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 Column(Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("③ 分享内容", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text("分享内容", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                         Text(
                             dirStack.joinToString(" / ") { it.second }.ifBlank { "根目录" },
                             style = MaterialTheme.typography.bodySmall,
@@ -846,93 +1039,7 @@ private fun DesktopApp(settings: DesktopSettings, darkMode: MutableState<Int>, t
 
         }
 
-        // ---------- 我的网盘视图 ----------
-
-        // ---------- 我的网盘视图 ----------
-        if (tab == 1) {
-            Card(Modifier.fillMaxWidth().weight(1f), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                Column(Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("④ 我的夸克网盘", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            cloudDirStack.joinToString(" / ") { it.second }.ifBlank { "根目录" },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.weight(1f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (cloudDirStack.isNotEmpty()) {
-                            OutlinedButton(onClick = {
-                                val popped = cloudDirStack.removeAt(cloudDirStack.lastIndex)
-                                loadCloudDir(popped.first)
-                            }) {
-                                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = null, Modifier.size(16.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("上级")
-                            }
-                        }
-                        OutlinedButton(
-                            enabled = quarkCookie.isNotBlank() && !cloudLoading,
-                            onClick = { loadCloudDir(cloudDirStack.lastOrNull()?.first ?: "0") }
-                        ) { Text("刷新") }
-                    }
-                    run {
-                        Text(cloudMessage, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.height(8.dp))
-                        LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.weight(1f)) {
-                            items(cloudFiles) { file ->
-                                FileRow(
-                                    file = file,
-                                    resolving = cloudLoading,
-                                    onEnterDir = {
-                                        cloudDirStack.add(file.fid to file.fname)
-                                        loadCloudDir(file.fid)
-                                    },
-                                    onGetLink = {
-                                        cloudLoading = true
-                                        scope.launch {
-                                            runCatching { quarkApi.getDownloadLink(file.fid, quarkCookie.trim()) }
-                                                .onSuccess { link ->
-                                                    if (link != null) {
-                                                        clipboard.setText(AnnotatedString(link.downloadUrl))
-                                                        cloudMessage = "直链已复制到剪贴板"
-                                                    } else cloudMessage = "未取到直链"
-                                                }
-                                                .onFailure { cloudMessage = "取直链失败：${it.message}" }
-                                            cloudLoading = false
-                                        }
-                                    },
-                                    onDownload = {
-                                        cloudLoading = true
-                                        scope.launch {
-                                            runCatching {
-                                                val link = quarkApi.getDownloadLink(file.fid, quarkCookie.trim())
-                                                    ?: throw IllegalStateException("未取到直链")
-                                                // 个人盘直链请求头：与分享下载一致（Cookie+UA+Referer 防盗链）
-                                                downloadManager.enqueue(
-                                                    link.downloadUrl,
-                                                    link.filename,
-                                                    mapOf(
-                                                        "Cookie" to quarkCookie.trim(),
-                                                        "User-Agent" to QuarkConstants.API_USER_AGENT,
-                                                        "Referer" to QuarkConstants.DOWNLOAD_REFERER
-                                                    ),
-                                                    link.size,
-                                                    DownloadPlatform.QUARK
-                                                )
-                                            }.onSuccess { cloudMessage = "已加入下载任务" }
-                                                .onFailure { cloudMessage = "加入下载失败：${it.message}" }
-                                            cloudLoading = false
-                                        }
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        // 「我的文件」浏览已收进各网盘账号卡的二级展开区（DriveBrowserSection）
 
         // ---------- 下载卡 ----------
         if (tab == 2) {
@@ -1132,6 +1239,95 @@ private fun FileRow(
             } else {
                 TextButton(enabled = !resolving, onClick = onGetLink) { Text("直链") }
                 OutlinedButton(enabled = !resolving, onClick = onDownload) { Text("下载") }
+            }
+        }
+    }
+}
+
+/** 单个网盘「我的文件」二级浏览状态（收在账号卡展开区内；dirStack 元素为 fid/路径 to 名称）。 */
+private class DriveBrowseState {
+    var open by mutableStateOf(false)
+    var files by mutableStateOf<List<ShareFile>>(emptyList())
+    var loading by mutableStateOf(false)
+    var message by mutableStateOf("点击「浏览我的网盘文件」加载")
+    val dirStack = mutableStateListOf<Pair<String, String>>()
+}
+
+/**
+ * 二级「我的文件」浏览区（收进账号卡展开区）：
+ * 开关行 → 展开后面包屑 + 上级/刷新 + 状态行 + 文件列表（目录点击进入，文件可取直链/下载）。
+ * 首次展开自动加载根目录；列表固定高度，随外层手风琴滚动。
+ */
+@Composable
+private fun DriveBrowserSection(
+    platformKey: String,
+    state: DriveBrowseState,
+    onLoadDir: (String) -> Unit,
+    onEnterDir: (ShareFile) -> Unit,
+    onGetLink: (ShareFile) -> Unit,
+    onDownload: (ShareFile) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+        TextButton(onClick = {
+            state.open = !state.open
+            if (state.open && state.files.isEmpty() && !state.loading) {
+                onLoadDir(driveRootFid(platformKey))
+            }
+        }) {
+            Icon(Icons.Outlined.Folder, contentDescription = null, Modifier.size(16.dp))
+            Spacer(Modifier.width(4.dp))
+            Text(if (state.open) "收起我的文件" else "浏览我的网盘文件")
+        }
+        if (state.open) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    state.dirStack.joinToString(" / ") { it.second }.ifBlank { "根目录" },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (state.dirStack.isNotEmpty()) {
+                    OutlinedButton(onClick = {
+                        val popped = state.dirStack.removeAt(state.dirStack.lastIndex)
+                        onLoadDir(popped.first)
+                    }) {
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("上级")
+                    }
+                }
+                OutlinedButton(
+                    enabled = !state.loading,
+                    onClick = { onLoadDir(state.dirStack.lastOrNull()?.first ?: driveRootFid(platformKey)) }
+                ) { Text("刷新") }
+            }
+            Text(state.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (state.loading) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Text(
+                        "加载中…",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+                modifier = Modifier.fillMaxWidth().height(340.dp)
+            ) {
+                items(state.files) { file ->
+                    FileRow(
+                        file = file,
+                        resolving = state.loading,
+                        onEnterDir = { onEnterDir(file) },
+                        onGetLink = { onGetLink(file) },
+                        onDownload = { onDownload(file) }
+                    )
+                }
             }
         }
     }
