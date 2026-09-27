@@ -201,7 +201,10 @@ fun SettingsSection(settings: DesktopSettings, darkMode: MutableState<Int> = mut
                     listOf(0 to "跟随系统", 1 to "亮色", 2 to "暗色").forEach { (v, label) ->
                         FilterChip(
                             selected = darkMode.value == v,
-                            onClick = { darkMode.value = v },
+                            onClick = {
+                                darkMode.value = v
+                                settings.darkMode = v // 持久化（DesktopSettings 状态可观察，重启生效）
+                            },
                             label = { Text(label) }
                         )
                     }

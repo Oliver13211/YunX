@@ -261,7 +261,8 @@ internal suspend fun kcefSmoke(): String {
 @Composable
 private fun DesktopApp(settings: DesktopSettings, darkMode: MutableState<Int>, trayText: MutableState<String>) {
     val db = remember { AppDatabase.get() }
-    val settings = remember { DesktopSettings() }
+    // settings 用调用方传入的单例（main 里 remember 创建）：这里若再 new 一个，
+    // 两个实例的可观察状态互不相通（设置页改动对下载引擎/其他页不可见）
     val downloadManager = remember {
         DownloadManager(
             env = DesktopDownloadEnvironment(settings),
