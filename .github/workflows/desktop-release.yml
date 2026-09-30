@@ -44,9 +44,10 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      # composeApp 为 KMP 模块（含 androidTarget），AGP 配置阶段需要 Android SDK；
-      # setup-android 会安装 cmdline-tools 并接受许可，缺失的 platform/build-tools 由 AGP 自行补下
-      - uses: android-actions/setup-android@v3
+      # Android SDK：GitHub 托管机已预装（ANDROID_HOME + licenses 已接受），
+      # AGP 配置/构建期缺 platform/build-tools 会经 sdkmanager 自动补装。
+      # 注意：不要用 android-actions/setup-android@v3 —— 它尝试安装已被 Google
+      # 下架的 'tools' 包（2026-09 实测双平台直接失败），见首跑 36730928344。
 
       - name: 确保 WiX（jpackage 打 msi 依赖 light/candle）
         if: runner.os == 'Windows'
