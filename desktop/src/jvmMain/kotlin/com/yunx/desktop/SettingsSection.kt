@@ -213,7 +213,7 @@ fun SettingsSection(settings: DesktopSettings, darkMode: MutableState<Int> = mut
 
             HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
 
-            // ---------- 关于（对齐原版关于页桌面子集）+ 检查更新（Phase 5） ----------
+            // ---------- 关于（YunX Desktop 项目自身信息）+ 检查更新 ----------
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("关于", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text("YunX Desktop v${AppInfo.VERSION}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
@@ -230,23 +230,28 @@ fun SettingsSection(settings: DesktopSettings, darkMode: MutableState<Int> = mut
                     }
                 }
                 Text(
-                    "基于 YunX（云析）Android 版移植，Kotlin Multiplatform + Compose Multiplatform 构建。",
+                    "网盘分享链接解析与高速下载 · 跨平台桌面版（macOS / Windows，Linux 预留）",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    "开源协议：GNU AGPL-3.0（本软件完全免费开源，任何收费版本均为诈骗）",
+                    "项目主页：github.com/Oliver13211/YunX（desktop 分支）· 维护者：Oliver13211",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    "协议全文随安装包分发（应用包内 resources/LICENSE），亦可于仓库 LICENSE 查看。",
+                    "技术栈：Kotlin Multiplatform · Compose Multiplatform · Room · OkHttp · KCEF · jpackage",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    "上游项目：YunX（CYQawa 著）· 本仓库：github.com/Oliver13211/YunX（desktop 分支）",
+                    "本软件是 YunX（云析）Android 版（CYQawa 著）的衍生作品，同样以 AGPL-3.0 开源",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    "支持平台：夸克 / UC / 迅雷 / 百度 / 139 / 123 云盘 · 桌面端：macOS / Windows（Linux 预留）",
+                    "开源协议：GNU AGPL-3.0（本软件完全免费开源，任何收费版本均为诈骗）。协议全文随安装包分发" +
+                        "（应用包内 resources/LICENSE），亦可于仓库 LICENSE 查看。",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "支持网盘：夸克 / UC / 迅雷 / 百度 / 139 / 123 云盘",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
@@ -255,7 +260,7 @@ fun SettingsSection(settings: DesktopSettings, darkMode: MutableState<Int> = mut
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    "提示：不建议使用百度网盘，可能导致账号被风控（与上游一致的风险警示）。",
+                    "提示：不建议使用百度网盘，可能导致账号被风控。",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error
                 )
             }

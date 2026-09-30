@@ -164,7 +164,6 @@ internal fun driveRootFid(platformKey: String): String = when (platformKey) {
 
 /** 账号卡 key → DownloadPlatform 常量（String，下载入队用；CDN 约束见 Agent.md §5.3）。 */
 internal fun drivePlatformConst(platformKey: String): String = when (platformKey) {
-    "uc" -> DownloadPlatform.UC
     "baidu" -> DownloadPlatform.BAIDU
     "c139" -> DownloadPlatform.C139
     "pan123" -> DownloadPlatform.PAN123
@@ -393,9 +392,11 @@ private fun DesktopApp(settings: DesktopSettings, darkMode: MutableState<Int>, t
 
     // ---------- 界面导航（左侧 4 选项卡，对齐原版 MainTab） ----------
     var tab by remember { mutableStateOf(0) }
-    // 各网盘「我的文件」二级浏览状态（收进账号卡展开区；key 与 expandedLogin 一致）
+    // 各网盘「我的文件」二级浏览状态（收进账号卡展开区；key 与 expandedLogin 一致）。
+    // UC 不在内：Android 原版即无 UC 云盘视图，桌面实测其 __puus 轮换令牌导致浏览不稳定，
+    // 经用户决策移除（2026-09-30）；UC 保留 cookieSink 保活，分享解析/下载仍正常使用。
     val driveStates = remember {
-        listOf("quark", "pan123", "uc", "baidu", "c139", "xunlei").associateWith { DriveBrowseState() }
+        listOf("quark", "pan123", "baidu", "c139", "xunlei").associateWith { DriveBrowseState() }
     }
 
     // 启动自动检查更新（Phase 5）：延迟 3 秒避开首屏，失败静默，发现新版本才提示
@@ -430,7 +431,6 @@ private fun DesktopApp(settings: DesktopSettings, darkMode: MutableState<Int>, t
     // 桌面此前裸建 API：cookieSink 没接（响应携带的新令牌被丢弃）也不主动刷新，
     // 存的静态 Cookie「动不动失效、偶尔又成功」正是旧令牌在宽限窗口内时好时坏的表现。
     var lastQuarkRefreshTs by remember { mutableStateOf(0L) }
-    var lastUcRefreshTs by remember { mutableStateOf(0L) }
     LaunchedEffect(Unit) {
         quarkApi.cookieSink = { merged ->
             scope.launch {
@@ -466,30 +466,11 @@ private fun DesktopApp(settings: DesktopSettings, darkMode: MutableState<Int>, t
         return acc.cookie
     }
 
-    /** 保证 __puus 新鲜的 UC Cookie（对齐 Android UCAccountRepository.getFreshCookie） */
-    suspend fun freshUcCookie(): String {
-        val acc = ucDao.getAccount() ?: throw IllegalStateException("未登录：请先在上方完成 UC 授权")
-        if (System.currentTimeMillis() - lastUcRefreshTs <= UCConstants.PUUS_REFRESH_INTERVAL_MS) return acc.cookie
-        val refreshed = runCatching { ucApi.refreshSession(acc.cookie) }.getOrNull()
-        if (refreshed != null) {
-            ucDao.upsert(acc.copy(cookie = refreshed, updatedAt = System.currentTimeMillis()))
-            lastUcRefreshTs = System.currentTimeMillis()
-            ucCookie = refreshed
-            return refreshed
-        }
-        return acc.cookie
-    }
-
     /** 列个人盘目录（各平台凭证与 API 对齐 Android 各 CloudViewModel 的根目录语义） */
     suspend fun listOwnFiles(platformKey: String, fid: String): List<ShareFile> = when (platformKey) {
         "quark" -> {
             val cookie = freshQuarkCookie().trim()
             quarkApi.listCloudFiles(fid, cookie)
-                ?: throw IllegalStateException("Cookie 可能已失效，请重新登录")
-        }
-        "uc" -> {
-            val cookie = freshUcCookie().trim()
-            ucApi.listCloudFiles(fid, cookie)
                 ?: throw IllegalStateException("Cookie 可能已失效，请重新登录")
         }
         "baidu" -> {
@@ -530,17 +511,6 @@ private fun DesktopApp(settings: DesktopSettings, darkMode: MutableState<Int>, t
                     "Cookie" to cookie,
                     "User-Agent" to QuarkConstants.API_USER_AGENT,
                     "Referer" to QuarkConstants.DOWNLOAD_REFERER
-                )
-            }
-            "uc" -> {
-                val cookie = freshUcCookie().trim()
-                val link = ucApi.cloudGetDownloadLink(file.fid, cookie)
-                    ?: throw IllegalStateException("未取到直链")
-                link to mapOf(
-                    "Cookie" to cookie,
-                    "User-Agent" to UCConstants.USER_AGENT,
-                    "Referer" to UCConstants.DOWNLOAD_REFERER,
-                    "Origin" to UCConstants.WEB_ORIGIN
                 )
             }
             "baidu" -> {
@@ -793,15 +763,8 @@ private fun DesktopApp(settings: DesktopSettings, darkMode: MutableState<Int>, t
                             else ucStatus = "未检测到登录态"
                         }
                     )
-                    DriveBrowserSection(
-                        "uc",
-                        driveStates.getValue("uc"),
-                        onLoadDir = { loadDriveDir("uc", it) },
-                        onEnterDir = { driveEnterDir("uc", it) },
-                        onGetLink = { driveGetLink("uc", it) },
-                        onDownload = { driveDownload("uc", it) }
-                    )
                 }
+
                 AccountCard("百度网盘", Color(0xFF2932E1), baiduStatus, expandedLogin == "baidu", { toggle("baidu") }) {
                     LoginBody(
                         loginUrl = BaiduConstants.LOGIN_URL,
