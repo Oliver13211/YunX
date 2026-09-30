@@ -72,6 +72,15 @@ internal suspend fun ensureKcef(onPhase: (String, Float?) -> Unit): KCEFClient {
                 // Chromium profile（缓存/Cookie 媒体盐等）收敛到 ~/.yunx，避免污染工作目录
                 val profileDir = java.io.File(kcefInstallDir.parentFile, "kcef-profile").apply { mkdirs() }
                 cachePath = profileDir.absolutePath
+                // 风控对齐：夸克 PC 登录页（fr=pc&platform=pc）按 UA 识别环境，CEF 默认 UA
+                // 会被判为异常环境弹「疑似广告」拦截页（手机版 WebView 设了同款 UA 所以没事）。
+                // Android 各登录屏即用平台常量 UA（QuarkLoginScreen.userAgentString 同款），
+                // 桌面全局统一此 UA：其余平台（UC/123/百度/139）对未知 token 宽容，页面照常渲染。
+                userAgent = QuarkConstants.USER_AGENT
+                // 中文 locale → Accept-Language zh-CN，贴近正常用户环境，降低风控敏感度
+                locale = "zh-CN"
+                // 会话级 Cookie 也持久化（Android WebView 默认行为），重启后免重复登录
+                persistSessionCookies = true
             }
             // 钉 JBR 版本：默认取最新已是 cef_server 新布局，经典 JCEF 框架路径解析不匹配（dlopen SIGSEGV）
             download {

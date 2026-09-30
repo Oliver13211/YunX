@@ -946,8 +946,10 @@ private fun DesktopApp(settings: DesktopSettings, darkMode: MutableState<Int>, t
                         )
                         if (dirStack.isNotEmpty()) {
                             OutlinedButton(onClick = {
-                                val popped = dirStack.removeAt(dirStack.lastIndex)
-                                loadFiles(popped.first)
+                                // 与「我的文件」浏览同语义：弹出当前，加载新栈顶；栈空回分享根目录
+                                dirStack.removeAt(dirStack.lastIndex)
+                                val platform = sessionPlatform
+                                loadFiles(dirStack.lastOrNull()?.first ?: (if (platform != null) rootDirFid(platform) else ""))
                             }) {
                                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = null, Modifier.size(16.dp))
                                 Spacer(Modifier.width(4.dp))
@@ -1291,8 +1293,11 @@ private fun DriveBrowserSection(
                 )
                 if (state.dirStack.isNotEmpty()) {
                     OutlinedButton(onClick = {
-                        val popped = state.dirStack.removeAt(state.dirStack.lastIndex)
-                        onLoadDir(popped.first)
+                        // 对齐 Android CloudViewModel.back()：弹出当前目录，加载新的栈顶；栈空则回根。
+                        // 栈存的是「访问链含当前目录」，先前误写成「弹出后加载弹出的目录」，
+                        // 导致永远回不到上级、路径标签与内容错位（139 测试暴露）
+                        state.dirStack.removeAt(state.dirStack.lastIndex)
+                        onLoadDir(state.dirStack.lastOrNull()?.first ?: driveRootFid(platformKey))
                     }) {
                         Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = null, Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
