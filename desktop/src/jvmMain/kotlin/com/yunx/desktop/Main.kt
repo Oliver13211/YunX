@@ -425,19 +425,70 @@ private fun DesktopApp(settings: DesktopSettings, darkMode: MutableState<Int>, t
         }
     }
 
+    // ---------- __puus 会话保活（对齐 Android UCAccountRepository / QuarkAccountRepository 双保险） ----------
+    // UC/夸克 Cookie 里的 __puus/__pus 是服务端轮换的会话令牌（~90 分钟过期，响应中还会被轮换）；
+    // 桌面此前裸建 API：cookieSink 没接（响应携带的新令牌被丢弃）也不主动刷新，
+    // 存的静态 Cookie「动不动失效、偶尔又成功」正是旧令牌在宽限窗口内时好时坏的表现。
+    var lastQuarkRefreshTs by remember { mutableStateOf(0L) }
+    var lastUcRefreshTs by remember { mutableStateOf(0L) }
+    LaunchedEffect(Unit) {
+        quarkApi.cookieSink = { merged ->
+            scope.launch {
+                val acc = quarkDao.getAccount()
+                if (acc != null && acc.cookie != merged) {
+                    quarkDao.upsert(acc.copy(cookie = merged, updatedAt = System.currentTimeMillis()))
+                    quarkCookie = merged
+                }
+            }
+        }
+        ucApi.cookieSink = { merged ->
+            scope.launch {
+                val acc = ucDao.getAccount()
+                if (acc != null && acc.cookie != merged) {
+                    ucDao.upsert(acc.copy(cookie = merged, updatedAt = System.currentTimeMillis()))
+                    ucCookie = merged
+                }
+            }
+        }
+    }
+
+    /** 保证 __puus 新鲜的夸克 Cookie：超间隔先 refreshSession 再落库；失败回退当前值（不让浏览/下载直接崩） */
+    suspend fun freshQuarkCookie(): String {
+        val acc = quarkDao.getAccount() ?: throw IllegalStateException("未登录：请先在上方完成夸克授权")
+        if (System.currentTimeMillis() - lastQuarkRefreshTs <= QuarkConstants.PUUS_REFRESH_INTERVAL_MS) return acc.cookie
+        val refreshed = runCatching { quarkApi.refreshSession(acc.cookie) }.getOrNull()
+        if (refreshed != null) {
+            quarkDao.upsert(acc.copy(cookie = refreshed, updatedAt = System.currentTimeMillis()))
+            lastQuarkRefreshTs = System.currentTimeMillis()
+            quarkCookie = refreshed
+            return refreshed
+        }
+        return acc.cookie
+    }
+
+    /** 保证 __puus 新鲜的 UC Cookie（对齐 Android UCAccountRepository.getFreshCookie） */
+    suspend fun freshUcCookie(): String {
+        val acc = ucDao.getAccount() ?: throw IllegalStateException("未登录：请先在上方完成 UC 授权")
+        if (System.currentTimeMillis() - lastUcRefreshTs <= UCConstants.PUUS_REFRESH_INTERVAL_MS) return acc.cookie
+        val refreshed = runCatching { ucApi.refreshSession(acc.cookie) }.getOrNull()
+        if (refreshed != null) {
+            ucDao.upsert(acc.copy(cookie = refreshed, updatedAt = System.currentTimeMillis()))
+            lastUcRefreshTs = System.currentTimeMillis()
+            ucCookie = refreshed
+            return refreshed
+        }
+        return acc.cookie
+    }
+
     /** 列个人盘目录（各平台凭证与 API 对齐 Android 各 CloudViewModel 的根目录语义） */
     suspend fun listOwnFiles(platformKey: String, fid: String): List<ShareFile> = when (platformKey) {
         "quark" -> {
-            val cookie = quarkDao.getAccount()?.cookie.orEmpty().trim()
-            if (cookie.isBlank()) throw IllegalStateException("未登录：请先在上方完成夸克授权")
-            quarkCookie = cookie
+            val cookie = freshQuarkCookie().trim()
             quarkApi.listCloudFiles(fid, cookie)
                 ?: throw IllegalStateException("Cookie 可能已失效，请重新登录")
         }
         "uc" -> {
-            val cookie = ucDao.getAccount()?.cookie.orEmpty().trim()
-            if (cookie.isBlank()) throw IllegalStateException("未登录：请先在上方完成 UC 授权")
-            ucCookie = cookie
+            val cookie = freshUcCookie().trim()
             ucApi.listCloudFiles(fid, cookie)
                 ?: throw IllegalStateException("Cookie 可能已失效，请重新登录")
         }
@@ -472,7 +523,7 @@ private fun DesktopApp(settings: DesktopSettings, darkMode: MutableState<Int>, t
     suspend fun ownDownloadLink(platformKey: String, file: ShareFile): Pair<DownloadLink, Map<String, String>> =
         when (platformKey) {
             "quark" -> {
-                val cookie = quarkDao.getAccount()?.cookie.orEmpty().trim()
+                val cookie = freshQuarkCookie().trim()
                 val link = quarkApi.getDownloadLink(file.fid, cookie)
                     ?: throw IllegalStateException("未取到直链")
                 link to mapOf(
@@ -482,7 +533,7 @@ private fun DesktopApp(settings: DesktopSettings, darkMode: MutableState<Int>, t
                 )
             }
             "uc" -> {
-                val cookie = ucDao.getAccount()?.cookie.orEmpty().trim()
+                val cookie = freshUcCookie().trim()
                 val link = ucApi.cloudGetDownloadLink(file.fid, cookie)
                     ?: throw IllegalStateException("未取到直链")
                 link to mapOf(
